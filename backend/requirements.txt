@@ -1,12 +1,19 @@
-# P4 Document Evidence POC — minimal dependency set.
-# No AI/LLM client, no database driver: out of scope for this checkpoint
-# per ARCHITECTURE_MVP_PLAN.md D4/D5 (P4 only) and the current task's
-# explicit scope limits.
+# P4 Document Evidence POC dependencies, plus the D8 LlmClient abstraction's
+# minimal additions. No database driver: out of scope per D4/D5.
 
 fastapi>=0.115,<1.0
 uvicorn>=0.30,<1.0
 pymupdf>=1.24,<2.0
 pillow>=10.0
+
+# D11: server-side structured-output schema validation for the LlmClient
+# abstraction. Single-purpose, standard library for this exact job.
+jsonschema>=4.20,<5.0
+
+# D8: the locked AI provider SDK. Imported lazily by
+# backend/ai/client/anthropic_client.py so the test suite (which uses
+# FakeLlmClient exclusively) does not require it to be installed.
+anthropic>=0.40,<1.0
 
 # Test-only
 pytest>=8.0,<9.0
