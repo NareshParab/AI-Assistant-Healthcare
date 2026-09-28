@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal placeholder banner/icon for P1. Fire TV requires a launcher
+     banner for the app to display correctly in the home screen grid;
+     a real branded asset is a later-phase design task, not a P1 concern. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1B2733" />
+</shape>

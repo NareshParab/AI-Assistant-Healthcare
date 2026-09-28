@@ -1,0 +1,8 @@
+<resources>
+    <!-- Plain platform theme — deliberately not depending on the classic
+         Material Components library, since UI is Compose-only (tv-material). -->
+    <style name="Theme.AiAssistantHealthcare" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
