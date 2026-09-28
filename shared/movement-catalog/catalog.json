@@ -1,0 +1,959 @@
+{
+  "catalogVersion": "1.0.0",
+  "movements": [
+    {
+      "id": "warmup_seated_shoulder_rolls",
+      "name": "Seated shoulder rolls",
+      "category": "WARMUP",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat on the floor.",
+        "Slowly roll both shoulders up, back, and down.",
+        "Keep the movement smooth and unhurried."
+      ],
+      "contraindicationTags": [
+        "no_shoulder_movement",
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "warmup_standing_march_in_place",
+      "name": "Standing march in place (supported)",
+      "category": "WARMUP",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Lift one knee slightly, then the other, at a gentle pace.",
+        "Stop any time you feel unsteady."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge",
+        "no_exertion"
+      ],
+      "gentlerVariantId": "warmup_seated_shoulder_rolls",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "warmup_seated_arm_reaches",
+      "name": "Seated gentle arm reaches",
+      "category": "WARMUP",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall with arms relaxed at your sides.",
+        "Slowly reach both arms forward to shoulder height.",
+        "Lower them back down with control."
+      ],
+      "contraindicationTags": [
+        "no_overhead_reaching",
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "warmup_standing_side_bends_gentle",
+      "name": "Standing gentle side bends (supported)",
+      "category": "WARMUP",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand near a chair or counter for support.",
+        "Reach one arm gently overhead and lean slightly to the side.",
+        "Return to centre and repeat on the other side."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_overhead_reaching",
+        "avoid_twisting"
+      ],
+      "gentlerVariantId": "warmup_seated_arm_reaches",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "warmup_seated_ankle_circles",
+      "name": "Seated ankle circles",
+      "category": "WARMUP",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall and lift one foot slightly off the floor.",
+        "Circle the ankle slowly in one direction, then the other.",
+        "Switch to the other foot."
+      ],
+      "contraindicationTags": [
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "warmup_standing_gentle_torso_twist",
+      "name": "Standing gentle torso turn (supported)",
+      "category": "WARMUP",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Turn your upper body gently to one side, then the other.",
+        "Keep the turn small and controlled."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "avoid_twisting"
+      ],
+      "gentlerVariantId": "warmup_seated_ankle_circles",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_neck_rolls_seated",
+      "name": "Seated neck rolls",
+      "category": "MOBILITY",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Slowly turn your head to look right, then return to centre.",
+        "Repeat to the left, moving gently."
+      ],
+      "contraindicationTags": [
+        "no_neck_movement"
+      ],
+      "gentlerVariantId": "mob_neck_turns_seated",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_neck_turns_seated",
+      "name": "Seated gentle neck turns (small range)",
+      "category": "MOBILITY",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Turn your head a small amount to one side, then back to centre.",
+        "Repeat to the other side, keeping the movement small."
+      ],
+      "contraindicationTags": [
+        "no_neck_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_shoulder_circles_seated",
+      "name": "Seated shoulder circles",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall with arms relaxed.",
+        "Circle both shoulders slowly forward, then backward.",
+        "Keep the motion smooth."
+      ],
+      "contraindicationTags": [
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_wrist_circles_seated",
+      "name": "Seated wrist circles",
+      "category": "MOBILITY",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall and raise your hands in front of you.",
+        "Circle both wrists slowly in one direction, then the other."
+      ],
+      "contraindicationTags": [
+        "avoid_wrist_loading"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_seated_torso_twist_gentle",
+      "name": "Seated gentle torso turn",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall with feet flat.",
+        "Turn your upper body gently to one side, hands resting on your knees.",
+        "Return to centre and repeat to the other side."
+      ],
+      "contraindicationTags": [
+        "avoid_twisting"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_standing_hip_circles_supported",
+      "name": "Standing hip circles (supported)",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Move your hips in a small, slow circle.",
+        "Reverse direction after a few rounds."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_seated_knee_extensions",
+      "name": "Seated knee extensions",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Sit tall near the front of a stable chair.",
+        "Slowly straighten one knee, then lower it back down.",
+        "Repeat with the other leg."
+      ],
+      "contraindicationTags": [
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_standing_ankle_pumps_supported",
+      "name": "Standing ankle pumps (supported)",
+      "category": "MOBILITY",
+      "intensity": "VERY_LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Rise gently onto your toes, then lower your heels back down."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_seated_torso_side_reach",
+      "name": "Seated side reach",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Reach one arm gently up and over to the side.",
+        "Return to centre and repeat on the other side."
+      ],
+      "contraindicationTags": [
+        "no_overhead_reaching",
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_standing_arm_circles_supported",
+      "name": "Standing arm circles (supported)",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand near a chair or counter.",
+        "Circle both arms slowly forward, then backward, at shoulder height or lower."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_shoulder_movement",
+        "no_overhead_reaching"
+      ],
+      "gentlerVariantId": "mob_shoulder_circles_seated",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_seated_hip_marching",
+      "name": "Seated hip marching",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Lift one knee gently toward your chest, then lower it.",
+        "Alternate legs at an easy pace."
+      ],
+      "contraindicationTags": [
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "mob_standing_knee_lifts_supported",
+      "name": "Standing gentle knee lifts (supported)",
+      "category": "MOBILITY",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Lift one knee slightly, then lower it.",
+        "Alternate legs slowly."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge",
+        "no_exertion"
+      ],
+      "gentlerVariantId": "mob_seated_hip_marching",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_seated_leg_extensions",
+      "name": "Seated leg extensions",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Sit tall near the front of a stable chair.",
+        "Slowly straighten one leg out, hold briefly, then lower.",
+        "Repeat with the other leg."
+      ],
+      "contraindicationTags": [
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_standing_wall_pushups_supported",
+      "name": "Standing wall press (supported)",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand an arm's length from a wall, hands flat on it.",
+        "Bend your elbows slightly to lean toward the wall.",
+        "Push back gently to standing."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_exertion",
+        "avoid_wrist_loading"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_seated_arm_raises",
+      "name": "Seated arm raises",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall with arms relaxed.",
+        "Slowly raise both arms out to the side to shoulder height.",
+        "Lower them back down with control."
+      ],
+      "contraindicationTags": [
+        "no_shoulder_movement",
+        "no_overhead_reaching"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_standing_calf_raises_supported",
+      "name": "Standing calf raises (supported)",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Rise slowly onto your toes.",
+        "Lower your heels back down with control."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_sit_to_stand_supported",
+      "name": "Sit-to-stand (supported)",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "MODERATE",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit toward the front of a stable chair, hands on the armrests.",
+        "Press through your legs to stand up slowly.",
+        "Lower yourself back down with control."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_exertion",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": "strength_seated_leg_extensions",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_seated_overhead_reach_hold",
+      "name": "Seated gentle overhead reach",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall with arms relaxed.",
+        "Slowly raise both arms forward and slightly up, only as high as is comfortable.",
+        "Lower them back down with control."
+      ],
+      "contraindicationTags": [
+        "no_overhead_reaching",
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_standing_heel_to_toe_rock_supported",
+      "name": "Standing heel-to-toe rock (supported)",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Rock your weight gently forward onto your toes, then back onto your heels."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "strength_seated_knee_to_chest_gentle",
+      "name": "Seated gentle knee lift",
+      "category": "LIGHT_STRENGTH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Gently draw one knee toward your chest using your hands for support if helpful.",
+        "Lower and repeat with the other leg."
+      ],
+      "contraindicationTags": [
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_hamstring_reach",
+      "name": "Seated gentle hamstring reach",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Sit tall near the front of a stable chair.",
+        "Extend one leg forward with heel on the floor.",
+        "Lean forward gently from the hips until you feel a light stretch."
+      ],
+      "contraindicationTags": [
+        "no_forward_bending"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_neck_side_stretch_gentle",
+      "name": "Seated gentle neck side stretch",
+      "category": "STRETCH",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall.",
+        "Gently tilt your head toward one shoulder until you feel a light stretch.",
+        "Return to centre and repeat on the other side."
+      ],
+      "contraindicationTags": [
+        "no_neck_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_standing_calf_stretch_supported",
+      "name": "Standing calf stretch (supported)",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand facing a wall or stable counter, hands resting on it.",
+        "Step one foot back and press the heel gently toward the floor.",
+        "Hold, then switch sides."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_shoulder_cross_body",
+      "name": "Seated cross-body shoulder stretch",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall.",
+        "Gently bring one arm across your chest, supporting it lightly with the other hand.",
+        "Hold, then switch sides."
+      ],
+      "contraindicationTags": [
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_standing_quad_stretch_supported",
+      "name": "Standing gentle quad stretch (supported)",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand holding a stable chair or counter with one hand.",
+        "Gently bring one heel toward your seat if comfortable, holding with your free hand.",
+        "Hold lightly, then switch sides."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge",
+        "no_exertion"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_ankle_stretch",
+      "name": "Seated ankle stretch",
+      "category": "STRETCH",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall and extend one leg slightly.",
+        "Gently point and then flex your foot.",
+        "Repeat with the other foot."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_standing_chest_opener_supported",
+      "name": "Standing gentle chest opener (supported)",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Stand near a chair or counter for balance.",
+        "Gently draw your shoulders back and open your chest.",
+        "Hold for a few breaths, then relax."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_upper_back_reach",
+      "name": "Seated upper back reach",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall.",
+        "Clasp your hands loosely in front of you and round gently forward through the upper back.",
+        "Hold lightly, then release."
+      ],
+      "contraindicationTags": [
+        "no_forward_bending",
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_seated_side_stretch_gentle",
+      "name": "Seated gentle side stretch",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit tall, feet flat.",
+        "Reach one arm gently overhead and lean slightly to that side.",
+        "Return to centre and repeat on the other side."
+      ],
+      "contraindicationTags": [
+        "no_overhead_reaching",
+        "avoid_twisting"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "stretch_standing_hip_flexor_gentle_supported",
+      "name": "Standing gentle hip stretch (supported)",
+      "category": "STRETCH",
+      "intensity": "LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand holding a stable chair or counter.",
+        "Step one foot slightly back and gently shift your weight forward until you feel a light stretch at the front of the hip.",
+        "Hold, then switch sides."
+      ],
+      "contraindicationTags": [
+        "avoid_standing",
+        "no_balance_challenge"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "breathing_seated_diaphragmatic",
+      "name": "Seated relaxed breathing",
+      "category": "BREATHING",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 90,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably with your hands resting gently on your stomach.",
+        "Breathe in slowly through your nose, feeling your stomach rise.",
+        "Breathe out slowly, feeling your stomach lower. No holding your breath."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "breathing_seated_slow_count_breathing",
+      "name": "Seated slow counted breathing",
+      "category": "BREATHING",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 90,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably.",
+        "Breathe in gently for a slow count of three.",
+        "Breathe out gently for a slow count of three. Never force or hold the breath."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "breathing_seated_relaxed_belly_breathing",
+      "name": "Seated relaxed belly breathing",
+      "category": "BREATHING",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 90,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably with shoulders relaxed.",
+        "Let each breath in and out be slow, soft, and unforced.",
+        "If your mind wanders, gently return attention to your breath."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "breathing_standing_calming_breath_supported",
+      "name": "Standing calming breath (supported)",
+      "category": "BREATHING",
+      "intensity": "VERY_LOW",
+      "position": "STANDING_SUPPORTED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Stand comfortably, holding a chair or counter if helpful.",
+        "Breathe in slowly through your nose.",
+        "Breathe out slowly through your mouth, relaxing your shoulders."
+      ],
+      "contraindicationTags": [
+        "avoid_standing"
+      ],
+      "gentlerVariantId": "breathing_seated_relaxed_belly_breathing",
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "breathing_seated_extended_exhale_gentle",
+      "name": "Seated gentle extended exhale",
+      "category": "BREATHING",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 90,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably.",
+        "Breathe in gently through your nose.",
+        "Let your breath out slowly and a little longer than the inhale, without straining."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "relax_seated_shoulder_release",
+      "name": "Seated shoulder release",
+      "category": "RELAXATION",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 60,
+      "minDurationSec": 30,
+      "maxDurationSec": 120,
+      "instructionLines": [
+        "Sit comfortably.",
+        "Gently lift your shoulders toward your ears, then let them drop and relax.",
+        "Repeat slowly a few times."
+      ],
+      "contraindicationTags": [
+        "no_shoulder_movement"
+      ],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "relax_seated_eyes_closed_stillness",
+      "name": "Seated quiet stillness",
+      "category": "RELAXATION",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 90,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably with your eyes closed if that feels right.",
+        "Let your body settle and your breathing stay natural.",
+        "Simply rest in this stillness."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "relax_seated_hand_release",
+      "name": "Seated hand and finger release",
+      "category": "RELAXATION",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 45,
+      "minDurationSec": 30,
+      "maxDurationSec": 90,
+      "instructionLines": [
+        "Sit comfortably.",
+        "Gently open and close your hands a few times.",
+        "Let your hands rest loosely in your lap."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    },
+    {
+      "id": "relax_seated_body_scan_gentle",
+      "name": "Seated gentle body scan",
+      "category": "RELAXATION",
+      "intensity": "VERY_LOW",
+      "position": "SEATED",
+      "defaultDurationSec": 120,
+      "minDurationSec": 60,
+      "maxDurationSec": 180,
+      "instructionLines": [
+        "Sit comfortably with eyes open or closed.",
+        "Bring gentle attention to your feet, then slowly move attention upward through your body.",
+        "Let each part relax as you notice it."
+      ],
+      "contraindicationTags": [],
+      "gentlerVariantId": null,
+      "equipment": "NONE",
+      "catalogVersion": "1.0.0"
+    }
+  ]
+}
