@@ -22,18 +22,23 @@ import pathlib
 import sqlite3
 import time
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from backend.api.deps import get_db_connection, require_device_token
-from backend.api.errors import register_exception_handlers
+from backend.api.errors import ContractError, register_exception_handlers
 from backend.documents.pdf_evidence import (
     EvidenceNotFoundError,
     build_evidence_image,
 )
 from backend.documents.synthetic_data import generate_synthetic_prescription
+from backend.storage import documents as documents_storage
 from backend.storage import devices as devices_storage
 from backend.storage.devices import to_iso_string
+from backend.storage.documents import (
+    UnsupportedDocumentError,
+    UploadTooLargeError,
+)
 
 logger = logging.getLogger("p4.evidence")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -148,4 +153,62 @@ def create_pairing_code_route(
     return {
         "pairingCode": result.pairing_code,
         "expiresAt": to_iso_string(result.expires_at),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/documents (contract section 3.2). Auth: X-Device-Token -- the
+# contract's only defined auth mechanism for this endpoint (see this task's
+# report for the D21 companion/pairing-code gap this does not resolve).
+# Status codes per contract: 201/401/413/415/500 only (no 422 here), so
+# every content-rejection case below is UNSUPPORTED_MEDIA_TYPE (415).
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/documents", status_code=201)
+def upload_document_route(
+    file: UploadFile = File(...),
+    device_id: str = Depends(require_device_token),
+    conn: sqlite3.Connection = Depends(get_db_connection),
+) -> dict:
+    """Contract section 3.2: upload a text-layer PDF. Size/type validated
+    server-side (20 MB limit, magic bytes, text-layer check) -- never trusts
+    the client's filename or declared content type alone. D26: only the
+    device id and outcome are ever logged here, never the filename.
+    """
+
+    try:
+        file_bytes = documents_storage.read_and_validate_size(
+            iter(lambda: file.file.read(1024 * 1024), b"")
+        )
+    except UploadTooLargeError:
+        logger.info("document_upload outcome=too_large device_id=%s", device_id)
+        raise ContractError("PAYLOAD_TOO_LARGE")
+
+    try:
+        page_count = documents_storage.validate_pdf_and_get_page_count(file_bytes)
+    except UnsupportedDocumentError:
+        logger.info("document_upload outcome=unsupported_media device_id=%s", device_id)
+        raise ContractError("UNSUPPORTED_MEDIA_TYPE")
+
+    original_name = file.filename or "document.pdf"
+    result = documents_storage.store_uploaded_document(
+        conn,
+        device_id=device_id,
+        original_name=original_name,
+        file_bytes=file_bytes,
+        page_count=page_count,
+    )
+    logger.info(
+        "document_upload outcome=ok device_id=%s document_id=%s",
+        device_id,
+        result.document_id,
+    )
+    return {
+        "documentId": result.document_id,
+        "name": result.original_name,
+        "documentType": result.document_type,
+        "receivedAt": to_iso_string(result.received_at),
+        "processingState": result.processing_state,
+        "pageCount": result.page_count,
     }

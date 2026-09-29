@@ -47,10 +47,14 @@ def get_connection(db_path: pathlib.Path | None = None) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create the devices/pairing_codes tables if they do not already exist.
+    """Create the devices/pairing_codes/documents tables if they do not
+    already exist.
 
     Only a hash of any secret value is ever stored (device token, pairing
     code) -- never the raw value, per this task's explicit requirement.
+    Document rows hold pre-confirmation, server-owned metadata only (D6) --
+    never confirmed clinical data, and never the client's raw filename as a
+    storage path (path-traversal guard, backend/storage/documents.py).
     """
 
     conn.execute(
@@ -69,6 +73,23 @@ def init_schema(conn: sqlite3.Connection) -> None:
             device_id   TEXT NOT NULL,
             created_at  TEXT NOT NULL,
             expires_at  TEXT NOT NULL,
+            FOREIGN KEY (device_id) REFERENCES devices (device_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            document_id       TEXT PRIMARY KEY,
+            device_id         TEXT NOT NULL,
+            original_name     TEXT NOT NULL,
+            stored_filename   TEXT NOT NULL UNIQUE,
+            document_type     TEXT NOT NULL,
+            processing_state  TEXT NOT NULL,
+            page_count        INTEGER NOT NULL,
+            content_hash      TEXT NOT NULL,
+            size_bytes        INTEGER NOT NULL,
+            received_at       TEXT NOT NULL,
             FOREIGN KEY (device_id) REFERENCES devices (device_id)
         )
         """
