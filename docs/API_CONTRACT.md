@@ -1,17 +1,20 @@
 # API Contract — AI Assistant Healthcare Backend
 
-**STATUS: DRAFT v1.0.0 — awaiting owner approval to freeze. NOT FROZEN.**
+**STATUS: FROZEN v1.0.0 — approved by owner 2026-09-29.**
 
-This document is a proposal for review, not a commitment either developer may build
-against as final. The owner freezes it by explicit approval; until then, treat every shape
-in this document as provisional.
+This is the frozen v1.0.0 API contract. Every shape in this document is a commitment both
+developers may build against. Any change past this point — an added, removed, or altered
+endpoint, field, error code, or status code — requires explicit owner approval and a
+version bump, per §12 (Change control). Additive-only changes are not exempt.
 
 | | |
 |---|---|
 | **Date drafted** | 2026-09-29 |
+| **Date frozen** | 2026-09-29 |
 | **Source of truth** | `ARCHITECTURE_MVP_PLAN.md` §4 (API Design), §5 (AI Architecture), §6 (Document Pipeline), §7.3 (routine validation), and `PROJECT_MASTER_SPEC.md` (SAFE-501, SAFE-916, SAFE-1410, SAFE-1807, PRIV-1620, PRIV-1652) |
 | **Repo state this draft was written against** | `main` @ `f9b7f38760f4824bab7482136d0bf86748557b29` |
-| **Author** | Drafted per owner task; not self-approved |
+| **Repo state at freeze** | `main` @ `1625702` (pre-freeze commit) |
+| **Author** | Drafted per owner task; frozen per owner's 13 resolved decisions, §10 |
 
 This document does not modify `PROJECT_MASTER_SPEC.md`, `PROJECT_REVIEW.md`, or
 `ARCHITECTURE_MVP_PLAN.md`. Where this draft cites those documents, the citation is a
@@ -27,9 +30,9 @@ pointer, not a restatement with authority of its own.
 | Transport | **HTTPS only** — plaintext HTTP is not a valid deployment target (`PRIV-1620`) |
 | Body format | JSON (`application/json`) for all requests and non-binary responses |
 | Timestamps | ISO-8601, UTC, e.g. `2026-09-29T10:57:18Z` |
-| Auth | Device-token, sent as a single HTTP header on every request except `/v1/health`. **Header name is OPEN — see §11.** No accounts, no login, no per-user credential (D22) |
-| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job. `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
-| Pagination | None of the 16 endpoints below return an unbounded list; document/proposal lists are scoped to one device's own documents, which is expected to stay small. No pagination scheme is defined in this draft |
+| Auth | Device-token, sent as a single HTTP header on every request except `/v1/health`: **`X-Device-Token`** (resolved 2026-09-29, §10 decision 2). No accounts, no login, no per-user credential (D22) |
+| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job. `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
+| Pagination | None of the 17 endpoints below return an unbounded list; document/proposal lists are scoped to one device's own documents, which is expected to stay small. No pagination scheme is defined in this contract |
 
 ### 1.1 What the client never holds
 
@@ -61,8 +64,8 @@ Every non-2xx response body has this exact shape:
 | `message` | string | Short, plain language, **safe to render on a TV**. Never document text, never extracted values, never clinical content, never a prompt or response body (D26) |
 | `retryable` | boolean | `true` if an identical retry might succeed (e.g. transient network); `false` if retrying without changing the request cannot help (e.g. validation error, not-found) |
 
-**The starter error code list below is a proposal, not exhaustive — see §11 (OPEN:
-error code list).**
+**Frozen as the v1 error code list (resolved 2026-09-29, §10 decision 5). Additions past
+this point require a version bump per §12 — this list is not casually extensible.**
 
 | Code | HTTP status | retryable | Meaning |
 |---|---|---|---|
@@ -72,24 +75,28 @@ error code list).**
 | `JOB_NOT_FOUND` | 404 | false | No extraction job with that id |
 | `ALREADY_REVIEWED` | 409 | false | The proposal has already been confirmed/edited/discarded |
 | `UNKNOWN_FIELD_ID` | 404 | false | Wellness/field lookup for an id that does not exist (POC-era; see §8) |
-| `PAYLOAD_TOO_LARGE` | 413 | false | Document upload exceeds the size limit (§11 OPEN) |
+| `PAYLOAD_TOO_LARGE` | 413 | false | Document upload exceeds the 20 MB limit (resolved 2026-09-29, §10 decision 4) |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | false | Uploaded file is not a text-layer PDF (D7) |
-| `VALIDATION_ERROR` | 422 | false | Request body failed schema validation |
+| `VALIDATION_ERROR` | 422 | false | Request body, or an `editedFields` patch, failed schema validation |
 | `EXTRACTION_FAILED` | 200 (in job body) | true | Extraction could not complete; see §5 |
 | `TRANSIENT_UPSTREAM_ERROR` | 503 | true | The backend's own dependency (e.g. AI provider) failed transiently |
 | `INTERNAL_ERROR` | 500 | true | Unclassified server error |
 
 ---
 
-## 3. The 16 endpoints
+## 3. The 17 endpoints
 
-**Finding, reported plainly rather than silently reconciled**: `ARCHITECTURE_MVP_PLAN.md`
-§4 states *"Eighteen endpoints"* in its own prose, but its own table lists **16** distinct
-`(method, path)` rows — verified by direct count. This draft documents the **16 endpoints
-that are actually specified**. It does not invent two more to match the prose count. See
-§11, OPEN question 1.
+**Finding, resolved rather than silently reconciled**: `ARCHITECTURE_MVP_PLAN.md` §4
+states *"Eighteen endpoints"* in its own prose, but its own table lists **16** distinct
+`(method, path)` rows — verified by direct count, twice. The owner has resolved this: the
+plan's table (16) is authoritative and its prose ("Eighteen") is an error; the plan itself
+is not edited (out of scope for this document). One further endpoint, `DELETE
+/v1/documents/{id}`, is added here per owner decision (required by `PRIV-1612`,
+`PROD-1531`, and the plan's Day 14 "document delete/reset" — see §10 decision 1). **Total:
+17 endpoints, frozen.**
 
-Grouped exactly as §4 groups them.
+Grouped exactly as §4 groups them, with the one addition placed in its natural group
+(Documents).
 
 ### 3.1 Devices
 
@@ -100,14 +107,14 @@ Grouped exactly as §4 groups them.
 | Purpose | Issue a device token on first run |
 | Regime | none |
 | Tier (D20) | 2 (network required — there is no device identity without it) |
-| Fallback (D24) | None specified in the plan. **OPEN — see §11** |
+| Fallback (D24) | N/A — not an AI-touching operation, so D24's per-operation fallback table does not apply. On failure the client receives a standard error response (§2) and may retry |
 
 **Request**
 ```json
 {}
 ```
-*(No fields specified by the plan. This draft proposes an empty body; the server assigns
-and returns a new token. OPEN if any client metadata should be sent — see §11.)*
+**Resolved 2026-09-29 (§10 decision 12): the body is genuinely empty.** No client metadata
+field exists in v1.0.0; the server assigns and returns a new token.
 
 **Response `201 Created`**
 ```json
@@ -128,12 +135,13 @@ and returns a new token. OPEN if any client metadata should be sent — see §11
 | Purpose | Create a short pairing code for the companion (D22) |
 | Regime | none |
 | Tier (D20) | 2 |
-| Fallback (D24) | None specified. **OPEN — see §11** |
+| Fallback (D24) | N/A — not an AI-touching operation; D24's fallback table does not apply. On failure the client receives a standard error response (§2) and may retry |
 
 **Request** (device token header required)
 ```json
 {}
 ```
+**Resolved 2026-09-29 (§10 decision 12): the body is genuinely empty.**
 
 **Response `201 Created`**
 ```json
@@ -143,10 +151,11 @@ and returns a new token. OPEN if any client metadata should be sent — see §11
 }
 ```
 
-D22 specifies the code is **6 characters**; this draft's example matches that. The
-**expiry duration is not specified by the plan** (it says only "short-lived pairing
-record" and, separately, "long-lived demo codes" for the hackathon demo specifically —
-these are not the same number). **OPEN — see §11.**
+D22 specifies the code is **6 characters**; the example above matches. **Expiry resolved
+2026-09-29 (§10 decision 3): 15 minutes for real use.** A separate, longer-lived demo code
+is supported for hackathon recording (D22) — the exact demo-code duration is an
+operational/demo-configuration detail, not a v1.0.0 contract field, and is not specified
+further here.
 
 **Status codes:** `201` created. `401` `UNAUTHENTICATED`. `500` `INTERNAL_ERROR`.
 
@@ -161,7 +170,7 @@ these are not the same number). **OPEN — see §11.**
 | Purpose | Upload a document (from the companion, or a seeded/bundled document) |
 | Regime | none (no AI runs on upload itself) |
 | Tier (D20) | 2 |
-| Fallback (D24) | None specified. **OPEN — see §11** |
+| Fallback (D24) | N/A — not an AI-touching operation; D24's fallback table does not apply. An oversized or wrong-type upload is rejected outright (§2) with no partial/degraded acceptance |
 
 **Request:** `multipart/form-data` with one file field, `file`, containing a text-layer PDF
 (D7 — no OCR, no scanned images accepted in this MVP).
@@ -181,7 +190,8 @@ these are not the same number). **OPEN — see §11.**
 **Status codes:** `201` created. `401` `UNAUTHENTICATED`. `413` `PAYLOAD_TOO_LARGE`. `415`
 `UNSUPPORTED_MEDIA_TYPE`. `500` `INTERNAL_ERROR`.
 
-Upload size limit is **not specified anywhere in the plan. OPEN — see §11.**
+**Upload size limit resolved 2026-09-29 (§10 decision 4): 20 MB**, enforced server-side,
+rejected with `413 PAYLOAD_TOO_LARGE`.
 
 ---
 
@@ -269,6 +279,58 @@ or "page does not exist" (mirrors `EvidenceNotFoundError` for an out-of-range pa
 confirmed in `pdf_evidence.py:55-58`). `422` if `highlight` names a `sourceReferenceId`
 that does not resolve to a span on this page (mirrors `EvidenceNotFoundError` when
 `page.search_for` finds nothing, confirmed at `pdf_evidence.py:60-62`).
+
+---
+
+#### `DELETE /v1/documents/{id}`
+
+**Added by owner decision 2026-09-29 (§10 decision 1)** — required by `PRIV-1612`
+("Documents and clinical data MUST NOT be retained longer than needed... and the user
+MUST be able to remove them"), `PROD-1531` (explicit-confirmation deletion), and the
+plan's Day 14 "document delete/reset" task. Not present in the original draft.
+
+| | |
+|---|---|
+| Purpose | Delete a document: removes its blob, every page render, and every proposal (reviewed or not) tied to it |
+| Regime | none |
+| Tier (D20) | 2 (network required) |
+| Fallback (D24) | None — a delete that cannot reach the server has simply not happened yet; there is no offline/local delete state to fall back to |
+
+**What this endpoint does not do**: it **never touches confirmed data on the device**
+(D6). Confirmed `CareInstruction`s written device-side at `POST /proposals/{id}/review`
+time are not affected by deleting the source document server-side — the server only ever
+held the pre-confirmation document and proposal data, which is exactly what this endpoint
+removes. A confirmed instruction's `sourceReferenceId` may become unresolvable for a fresh
+`pages/{n}/render` call after deletion (the evidence image can no longer be re-rendered on
+demand); the confirmed instruction's own `originalText` (verbatim, retained device-side)
+is unaffected.
+
+**Request:** none (no body).
+
+**Response `204 No Content`** — no body.
+
+**Status codes:** `204` deleted. `401` `UNAUTHENTICATED`. `404` `DOCUMENT_NOT_FOUND`.
+
+**SYNTHETIC example — success**
+
+```
+DELETE /v1/documents/SYNTHETIC-doc-0001
+X-Device-Token: SYNTHETIC-8f14e45f-ceea-467e-bd97-11example0001
+
+204 No Content
+(no response body)
+```
+
+**SYNTHETIC example — error**
+```json
+{
+  "error": {
+    "code": "DOCUMENT_NOT_FOUND",
+    "message": "That document could not be found.",
+    "retryable": false
+  }
+}
+```
 
 ---
 
@@ -413,9 +475,15 @@ affect a device's plan until a human confirms it here.
 }
 ```
 
-The exact shape of `editedFields` (a free-form patch of `proposedFields`, versus a
-fully-specified replacement object) is **not fixed by the plan. OPEN — see §11.** This
-draft proposes a free-form partial patch, matching `proposedFields`' own shape.
+**Resolved 2026-09-29 (§10 decision 6): `editedFields` is a partial patch of
+`proposedFields`, but it is NOT free-form.** Every field named in `editedFields` **MUST
+validate against the same strict schema as the proposal's own `proposedType`** — a patch
+that would produce an invalid `MEDICATION` (for example) is rejected with `422
+VALIDATION_ERROR` before anything is written. An edit to a dose field is still treated as
+a **human transcription correction**, not a new clinical fact: the server does not
+originate, infer, or normalize any value in the patch (`SAFE-504`); it only accepts or
+rejects exactly what the human typed. (This was open-question #6 in the pre-freeze draft,
+now resolved above.)
 
 **Request — `discard`**
 ```json
@@ -431,11 +499,12 @@ draft proposes a free-form partial patch, matching `proposedFields`' own shape.
 }
 ```
 
-**Response `200 OK` (confirm/edit)**
+**Response `200 OK` (`action: "confirm"`, unedited)**
 ```json
 {
   "proposalId": "SYNTHETIC-prop-0001",
   "reviewState": "CONFIRMED",
+  "editedByHuman": false,
   "confirmedInstruction": {
     "instructionType": "MEDICATION",
     "medicineName": "Tab. Ecosprin",
@@ -451,9 +520,39 @@ draft proposes a free-form partial patch, matching `proposedFields`' own shape.
 }
 ```
 
-`plainLanguage.isVerbatimFallback: true` signals the D24 fallback fired (the confirmed
-`text` equals `originalText` verbatim, not a genuine simplification) — the client can
-distinguish the two cases without inspecting the text itself.
+**Response `200 OK` (`action: "edit"`)** — per §10 decision 6, retains both the AI's
+original proposal (`originallyProposedFields`) and the verbatim source text
+(`originalText`), alongside the human-edited final value:
+```json
+{
+  "proposalId": "SYNTHETIC-prop-0001",
+  "reviewState": "EDITED_CONFIRMED",
+  "editedByHuman": true,
+  "editReason": "Clarified with the confirming caregiver",
+  "confirmedInstruction": {
+    "instructionType": "MEDICATION",
+    "medicineName": "Tab. Ecosprin",
+    "doseTextAsTranscribed": "Tab. Ecosprin 75mg -- 1 tablet before breakfast, with water",
+    "originallyProposedFields": {
+      "doseText": "Tab. Ecosprin 75mg -- 1 tablet before breakfast"
+    },
+    "originalText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast",
+    "sourceDocumentId": "SYNTHETIC-doc-0001",
+    "sourceReferenceId": "SYNTHETIC-ref-0001",
+    "plainLanguage": {
+      "text": "Tab. Ecosprin 75mg -- 1 tablet before breakfast, with water",
+      "isVerbatimFallback": false
+    }
+  }
+}
+```
+
+`plainLanguage.isVerbatimFallback: true` (either response) signals the D24 fallback fired
+(the confirmed `text` equals `originalText`/the edited value verbatim, not a genuine
+simplification) — the client can distinguish the two cases without inspecting the text
+itself. `reviewState` is `CONFIRMED` for an unedited confirmation and `EDITED_CONFIRMED`
+when the human changed a value — matching the confirmation-state model in
+`ARCHITECTURE_MVP_PLAN.md` §19.1.
 
 **Response `200 OK` (discard)**
 ```json
@@ -472,8 +571,8 @@ distinguish the two cases without inspecting the text itself.
 ```
 
 **Status codes:** `200` ok. `401` `UNAUTHENTICATED`. `404` `PROPOSAL_NOT_FOUND`. `409`
-`ALREADY_REVIEWED`. `422` `VALIDATION_ERROR` (unknown `action` value, or malformed
-`editedFields`).
+`ALREADY_REVIEWED`. `422` `VALIDATION_ERROR` (unknown `action` value, or an `editedFields`
+patch that fails the proposal's `proposedType` schema).
 
 ---
 
@@ -541,16 +640,17 @@ verified by reading both files).
 ```
 
 The client distinguishes a genuine GUIDE-generated routine from a fallback preset via
-`origin`. **`failureReasons` on the original (failed) generation attempt is not exposed to
-the client in this draft** — only the fact that a preset was served. Exposing the internal
-failure reason was judged unnecessary for the client and a potential minor information
-leak about the model's behaviour; **OPEN if the owner wants it exposed anyway — see §11.**
+`origin`. **Resolved 2026-09-29 (§10 decision 11): `failureReasons` on a failed generation
+attempt is NOT exposed to the client, by design (D26)** — the client sees only `origin:
+"PRESET"` and the served routine's own (passing) `validationResult`. Internal failure
+detail is server-side/log-only.
 
 **A note on presets**: this endpoint's `PRESET` response shape assumes hand-authored 10/15/
 20-minute presets exist per plan §7.4. **As of `f9b7f38`, no preset content exists anywhere
 in the repository** (verified: no file under `shared/movement-catalog/` or elsewhere
 defines presets). This endpoint is therefore documented as **NOT YET IMPLEMENTED** — see
-§9.
+§8. The preset-content gap itself is tracked as a known implementation dependency, not a
+contract question (§10 decision 13, §11).
 
 **Status codes:** `200` ok (both origins). `401` `UNAUTHENTICATED`. `422`
 `VALIDATION_ERROR` (malformed request body itself, distinct from a GUIDE-generation
@@ -757,7 +857,7 @@ output.
 | `proposedFields` | object | Type-specific fields, e.g. `medicineName`, `doseText` for `MEDICATION`. **Dose text is always verbatim, never normalized or recomputed (SAFE-504)** |
 | `sourceReferenceId` | string | Identifies the exact page + bounding box this proposal came from; pass this to `pages/{n}/render?highlight=` |
 | `page` | integer | 0-indexed, matches the PDF page the span is on |
-| `confidence` | number | `0.0`–`1.0`. **Exact scale/meaning not fixed by the plan — OPEN, see §11** |
+| `confidence` | number | `0.0`–`1.0`, **uncalibrated** (resolved 2026-09-29, §10 decision 7). **Clients MUST drive behaviour from `reviewState` (`PROPOSED` vs `UNCLEAR`), never from this number.** It is not a certainty and must not be presented to the user as one (`SAFE-503`) — it exists for server-side/log-side signal only |
 | `reviewState` | string | `PROPOSED` or `UNCLEAR` — **only these two values exist server-side before a human acts.** `CONFIRMED`/`EDITED_CONFIRMED`/`DISCARDED` only exist after `POST /proposals/{id}/review` |
 
 ### Evidence image contract (`GET /v1/documents/{id}/pages/{n}/render`)
@@ -777,8 +877,9 @@ output.
 A `sourceReferenceId` uniquely identifies one located span: a `(documentId, page, bbox)`
 triple, server-side. It is opaque to the client — the client never constructs one, only
 passes back one it was given, either to highlight a render or to trace a confirmed
-instruction to its evidence. **Exact string format (UUID vs composite key) is not fixed by
-the plan — OPEN, see §11.**
+instruction to its evidence. **Format resolved 2026-09-29 (§10 decision 8): server-generated
+UUID v4**, e.g. `f47ac10b-58cc-4372-a567-0e02b2c3d479`. The `SYNTHETIC-ref-NNNN` strings
+used in this document's examples are placeholders for readability, not the real format.
 
 ---
 
@@ -794,14 +895,17 @@ Applies to `POST /v1/documents/{id}/extract` + `GET /v1/extraction-jobs/{id}` on
 | `COMPLETED` | Proposals available, `proposals` populated | **yes** |
 | `EXTRACTION_FAILED` | D24 fallback fired; `proposals: null`, never partial | **yes** |
 
-**Poll interval guidance**: not specified by the plan. This draft recommends **2 seconds**,
-matching the "honest, determinate progress state" language in D9/`PROD-439` without being
-so frequent it's chatty for no benefit. **OPEN — see §11.**
+**Poll interval: 2 seconds** (resolved 2026-09-29, §10 decision 9) — matches the "honest,
+determinate progress state" language in D9/`PROD-439` without being so frequent it's
+chatty for no benefit.
 
-**Timeout behaviour**: not specified by the plan. This draft recommends the **client**
-impose a timeout (e.g. 60 seconds of polling) and show a non-alarming "this is taking
-longer than expected, try again" state — the server itself does not time out a job, it
-either completes or fails per D24. **OPEN — see §11.**
+**Client-side timeout: 60 seconds of polling** (resolved 2026-09-29, §10 decision 10 —
+**marked PROVISIONAL, pending P5 latency measurements**; this number may change once real
+extraction latency is measured, without requiring a contract version bump for the number
+alone, but any *shape* change around it does). On timeout, the client shows an honest,
+non-alarming "this is taking longer than expected" state and allows retry (`PROD-439`).
+The server itself does not time out a job — it either reaches `COMPLETED` or
+`EXTRACTION_FAILED` per D24; the timeout is a client-side UX decision only.
 
 ---
 
@@ -824,11 +928,12 @@ object and enumerating `app.routes` offline (no server started):
 |---|---|
 | `GET /v1/health` | **Matches.** `backend/api/main.py:60-62` returns exactly `{"status": "ok"}` |
 | `GET /v1/documents/{id}/pages/{n}/render` | **NOT YET IMPLEMENTED** as this exact route. A functionally-related POC route exists at `GET /v1/poc/p4/evidence?field=<id>` (`main.py:65-93`), which locates one of five hardcoded field ids in one bundled demo document and returns a cropped, highlighted PNG. It proves the *mechanism* this contract's endpoint depends on (backed by the same `pdf_evidence.py` module) but takes a different, non-contract-shaped parameter (`field`, not `id`/`n`/`highlight`) and has no document/page/sourceReferenceId model behind it |
-| All other 14 endpoints (devices, documents CRUD, extraction, review, routines, catalog, assist, summary, requests) | **NOT YET IMPLEMENTED.** No route, no handler, no request/response model exists for any of them in `backend/api/main.py` as of `f9b7f38` |
+| `DELETE /v1/documents/{id}` | **NOT YET IMPLEMENTED.** Added to this contract at freeze time (§10 decision 1); no route exists yet |
+| All other 14 endpoints (devices, remaining documents CRUD, extraction, review, routines, catalog, assist, summary, requests) | **NOT YET IMPLEMENTED.** No route, no handler, no request/response model exists for any of them in `backend/api/main.py` as of `f9b7f38` |
 | `GET /v1/poc/p4/fields` | **Not part of this contract.** POC-only, scoped under `/v1/poc/`, explicitly excluded from the frozen API surface by its own namespace |
 
-**Summary: 1 of 16 contract endpoints is implemented and matches exactly (`/v1/health`).
-15 of 16 are not yet implemented.** The Fire TV client should build against this document
+**Summary: 1 of 17 contract endpoints is implemented and matches exactly (`/v1/health`).
+16 of 17 are not yet implemented.** The Fire TV client should build against this document
 as a set of stubs, not against the live server, for all but `/v1/health`.
 
 ---
@@ -852,42 +957,64 @@ explicit architecture change to D6/D18/D19/D20.
 
 ---
 
-## 10. Open questions for the owner
+## 10. Resolved decisions
 
-Every place the plan is silent, or where this draft found a conflict, rather than
-resolving it silently:
+All 13 items that were open in the pre-freeze draft, resolved by the owner on **2026-09-29**.
+Each entry: the decision, a one-line rationale, and the date.
 
-| # | Question | This draft's recommended default | Status |
-|---|---|---|---|
-| 1 | Plan §4 says "Eighteen endpoints" but its own table lists 16. Which is correct — is content missing from the plan, or is the prose count wrong? | Treat 16 as authoritative (it's the enumerated, checkable artifact); fix the prose count when the plan is next revised | **OPEN** |
-| 2 | What HTTP header carries the device token? | `X-Device-Token: <token>` | **OPEN** |
-| 3 | Pairing code expiry duration | 15 minutes for real use; a separate, longer-lived demo code for hackathon recording (D22 already distinguishes these informally) | **OPEN** |
-| 4 | Document upload size limit | 20 MB per document (generous for a scanned or authored text-layer PDF, small enough to reject anything clearly wrong) | **OPEN** |
-| 5 | Full error code list (§2's table is a starting proposal, not exhaustive) | Ratify the starter list in §2; extend only as real failure modes are discovered during implementation | **OPEN** |
-| 6 | Exact shape of `editedFields` in `POST /proposals/{id}/review` (`action: "edit"`) | A free-form partial patch of `proposedFields`, as drafted in §3.4 | **OPEN** |
-| 7 | `confidence` field: scale and meaning (model-reported probability? a calibrated score? categorical bucketed to a float?) | `0.0`–`1.0`, treated as an uncalibrated relative signal only — never surfaced to the end user as a precise probability | **OPEN** |
-| 8 | `sourceReferenceId` format | Server-generated UUID v4 string | **OPEN** |
-| 9 | Extraction job poll interval | 2 seconds | **OPEN** |
-| 10 | Extraction job client-side timeout | 60 seconds of polling before showing a "taking longer than expected" state | **OPEN** |
-| 11 | Should a failed `routines/generate` attempt's internal `failureReasons` be exposed to the client at all, even when a preset is served? | No — expose only `origin: "PRESET"`; keep validator failure detail server-side/log-only | **OPEN** |
-| 12 | `POST /v1/devices/register` and `POST /v1/devices/pairing-code`: any request body fields at all (e.g. client app version, platform), or genuinely empty? | Genuinely empty for this MVP; add fields only if a real need appears | **OPEN** |
-| 13 | Presets for `routines/generate`'s `PRESET` origin do not exist anywhere in the repo yet (plan §7.4). Who authors them, and against which catalog version? | Same author/process as the D17 catalog itself, pinned to `catalogVersion: "1.0.0"` | **OPEN — blocks real use of the PRESET fallback** |
-
-None of these were decided by this draft. Each needs your explicit choice before the
-contract can be frozen.
+| # | Question | Decision | Rationale | Date |
+|---|---|---|---|---|
+| 1 | Plan §4 says "Eighteen endpoints" but its own table lists 16 | The plan's table (16) is authoritative; its prose ("Eighteen") is an error and is **not edited** (out of scope for this document). One endpoint is **added** here, `DELETE /v1/documents/{id}` (§3.2), bringing the frozen contract to **17 endpoints total** | Required by `PRIV-1612`/`PROD-1531`/plan Day-14 document delete-reset, which the original 16-endpoint table omitted | 2026-09-29 |
+| 2 | HTTP header for the device token | `X-Device-Token` | A single, explicit, non-standard header name avoids collision with any framework-default auth header and is unambiguous in logs/docs | 2026-09-29 |
+| 3 | Pairing code expiry duration | **15 minutes** for real use; a separate, longer-lived demo code is supported for hackathon recording (D22) | Balances a short real-world attack/collision window against the practical need for a stable demo-recording code | 2026-09-29 |
+| 4 | Document upload size limit | **20 MB**, enforced server-side, rejected with a clear error code (`PAYLOAD_TOO_LARGE`) | Generous for any real scanned or authored text-layer PDF; small enough to reject anything clearly wrong before it reaches extraction | 2026-09-29 |
+| 5 | Full error code list | The §2 table is adopted as the **v1 list**. Additions later require a version bump (§12) | Keeps both sides working from one stable, enumerable set rather than an open-ended list that can silently grow apart | 2026-09-29 |
+| 6 | Shape of `editedFields` in `POST /proposals/{id}/review` (`action: "edit"`) | A partial patch of `proposedFields` that **MUST validate against the same strict schema as the proposal's `proposedType`** — not free-form. Response marks `editedByHuman: true`, retains `originallyProposedFields` and `originalText` | An edit is a human transcription correction (`SAFE-504`/`SAFE-975`), never a new clinical fact the server originates; the strict schema and retained originals make that auditable | 2026-09-29 |
+| 7 | `confidence` field scale and meaning | `0.0`–`1.0`, **uncalibrated**. Clients **must** drive behaviour from `reviewState`, never from this number, and must never present it to the user as a certainty (`SAFE-503`) | Prevents a raw model-confidence number from being mistaken for, or presented as, clinical certainty | 2026-09-29 |
+| 8 | `sourceReferenceId` format | Server-generated **UUID v4** | Simple, collision-free, no information encoded in the string for the client to (mis)interpret | 2026-09-29 |
+| 9 | Extraction job poll interval | **2 seconds** | Matches D9/`PROD-439`'s "honest, determinate progress" without being chatty | 2026-09-29 |
+| 10 | Extraction job client-side timeout | **60 seconds**, marked **PROVISIONAL pending P5 latency measurements**. On timeout: an honest, non-alarming state, with retry allowed (`PROD-439`) | A real number requires real measured extraction latency, which doesn't exist yet; 60s is a reasonable placeholder, not a measured value | 2026-09-29 |
+| 11 | Whether a failed `routines/generate` attempt's `failureReasons` reach the client | **No.** The client sees only `origin: "PRESET"` and the served routine's own passing `validationResult`; failure detail is server-side/log-only | D26: internal model-failure detail is not client-facing information | 2026-09-29 |
+| 12 | Request body fields for `POST /v1/devices/register` and `POST /v1/devices/pairing-code` | **Empty body** for both | No real need identified for client metadata at registration/pairing time in this MVP | 2026-09-29 |
+| 13 | Presets for `routines/generate`'s `PRESET` origin (plan §7.4) — none exist in the repo | **Not part of this contract change.** The `PRESET` fallback path's shape is frozen (§3.5); the *content* it depends on is a **known implementation dependency**, not a contract question | Presets are catalog authoring work (same process as D17), independent of what the API shape looks like | 2026-09-29 |
 
 ---
 
-## 11. Freeze status
+## 11. Known implementation dependency (not a contract question)
 
-**This document is a DRAFT. It is not frozen.** Freezing requires:
+Per decision 13 above: `POST /v1/routines/generate`'s `PRESET` response shape (§3.5) is
+frozen, but **no preset content exists anywhere in the repository as of this freeze**
+(verified: no file under `shared/movement-catalog/` or elsewhere defines presets per plan
+§7.4). This is an implementation blocker for that endpoint's fallback path, tracked
+separately from this document. It does not block freezing this contract, because the
+*shape* the presets must conform to is already fully specified.
 
-1. Resolution of all 13 open questions in §10 (or an explicit owner decision to defer
-   specific ones past the freeze, clearly marked if so).
-2. Owner review of every request/response shape in §3.
-3. Explicit owner approval recorded (e.g. a commit message, a review comment, or direct
-   confirmation) before either developer treats any shape in this document as a
-   commitment.
+---
 
-Until frozen, the Fire TV client may build against these shapes as **stubs for
-development convenience**, but must expect them to change.
+## 12. Change control
+
+**This contract is FROZEN at v1.0.0, effective 2026-09-29.**
+
+From this point forward:
+
+- **Any** change to an endpoint (added, removed, or altered), a field (added, removed,
+  renamed, or retyped), an error code, or a status code requires **explicit owner
+  approval** before it is made.
+- **Additive-only changes are not exempt.** Adding a new optional field, a new endpoint,
+  or a new error code still requires a version bump — silent additive drift is exactly
+  what a frozen contract exists to prevent, since it lets the two sides silently stop
+  agreeing on what "the contract" means.
+- Every approved change is recorded in the version history table below, with the new
+  version number, the date, and a one-line description of what changed.
+- Version numbers follow `vMAJOR.MINOR.0`: a breaking change (removed/renamed field,
+  removed endpoint, changed status-code meaning) bumps `MAJOR`; an additive, non-breaking
+  change (new optional field, new endpoint, new error code) bumps `MINOR`.
+
+### Version history
+
+| Version | Date | Change |
+|---|---|---|
+| v1.0.0 | 2026-09-29 | Initial freeze. 17 endpoints (16 from `ARCHITECTURE_MVP_PLAN.md` §4's table + `DELETE /v1/documents/{id}`, added per owner decision). All 13 pre-freeze open questions resolved per §10. Item 10 (extraction timeout) marked PROVISIONAL pending P5 latency measurements — a future change to that number alone still requires a version bump per the rule above |
+
+No further changes are recorded in this document as of the freeze date. The next entry in
+this table is the first thing to add when a change is approved.
