@@ -1,0 +1,8 @@
+# P4 increment dependencies only. Full backend dependency set (D5) grows
+# as later phases (AI, guardrail, storage) are approved and implemented.
+fastapi
+uvicorn
+pymupdf
+reportlab
+pillow
+pytest

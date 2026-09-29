@@ -1,0 +1,1536 @@
+From 588b5b69c0cccd1ed153e22b2c20ac7af4176c67 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 12:17:18 +0000
+Subject: [PATCH] feat: author D17 movement catalog and deterministic GUIDE
+ routine validator
+
+Phase 1 (Days 5-6) backend work that has no dependency on physical Fire TV
+hardware or the Android toolchain, per D30/architecture: the physical-device
+gate blocks P2/P3 device validation only, not this work.
+
+- shared/movement-catalog/catalog.json: 45 hand-authored movements across
+  the exact composition in ARCHITECTURE_MVP_PLAN.md section 7.2 (6 warmup,
+  12 mobility, 8 light-strength, 10 stretch, 5 breathing, 4 relaxation).
+  Every entry satisfies SAFE-030 (low-to-moderate, bodyweight, no equipment)
+  and SAFE-034 by construction (no plyometric/high-impact/breath-holding/
+  spinal-loading/equipment content). All entries are SEATED or
+  STANDING_SUPPORTED (exceeds the SAFE-037 "roughly half" floor).
+  contraindicationTags are the join key to confirmed Precaution.blocksMovementTags
+  (SAFE-032).
+
+- backend/guardrail/routine_validator.py: the five deterministic checks from
+  section 7.3 (catalog membership, precaution-filter enforcement, SAFE-811
+  warmup/cooldown structure, PROD-121 duration tolerance, per-movement
+  min/max bounds). Independent of any prompt or AI provider (SAFE-921);
+  the GUIDE model is only ever allowed to emit catalog IDs + durations,
+  never movement text (D13), and this is what turns that into PASS/FAIL.
+  Fails closed on any unresolved/malformed input (SAFE-920).
+
+- backend/tests/test_routine_validator.py: 18 new tests -- catalog
+  authoring invariants (composition, no HIGH intensity, no equipment,
+  unique ids, resolvable gentler-variant refs) plus one test per
+  deterministic check, including the case that matters most: a movement
+  the precaution filter excluded still fails validation even if a model
+  ignored the filtered catalog and returned it anyway.
+
+Verification: 25/25 backend tests pass (7 pre-existing P4 tests unaffected
++ 18 new). No secrets, no clinical/patient content, no unrelated files
+touched. P1 physical-device validation and P2/P3 remain explicitly PENDING
+-- unaffected and untouched by this change.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXvQoaAcWj32wt2R91y7r3
+---
+ backend/guardrail/__init__.py           |   0
+ backend/guardrail/routine_validator.py  | 192 +++++
+ backend/tests/test_routine_validator.py | 308 ++++++++
+ shared/movement-catalog/catalog.json    | 959 ++++++++++++++++++++++++
+ 4 files changed, 1459 insertions(+)
+ create mode 100644 backend/guardrail/__init__.py
+ create mode 100644 backend/guardrail/routine_validator.py
+ create mode 100644 backend/tests/test_routine_validator.py
+ create mode 100644 shared/movement-catalog/catalog.json
+
+diff --git a/backend/guardrail/__init__.py b/backend/guardrail/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/guardrail/routine_validator.py b/backend/guardrail/routine_validator.py
+new file mode 100644
+index 0000000..cf2859a
+--- /dev/null
++++ b/backend/guardrail/routine_validator.py
+@@ -0,0 +1,192 @@
++"""Deterministic GUIDE routine validator.
++
++Implements the five checks specified in ARCHITECTURE_MVP_PLAN.md section 7.3
++and locked by decisions D13/D14/D17. This module has no dependency on any AI
++provider or prompt: it is deliberately readable and testable independently of
++both (SAFE-921), and it is the mechanism that makes SAFE-917 ("deterministic
++validation of GUIDE output") literally true.
++
++Nothing here may be loosened to make a demo or feature work (project rule:
++"Do not weaken a safety rule simply to make a demo or feature work").
++
++The GUIDE model (when integrated, per D13) is only ever allowed to emit
++catalog movement IDs and per-segment durations -- never movement text. This
++module is what turns that ID list into a PASS/FAIL result.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import Iterable
++
++# PROD-121 tolerance for total-duration match against the requested budget.
++# Kept as a named constant (not a magic number) so any future change to the
++# tolerance is a one-line, reviewable change here -- not a silent drift.
++DEFAULT_DURATION_TOLERANCE_SEC = 60
++
++# Categories that may legally open a routine (SAFE-811 / PROD-811).
++OPENING_CATEGORIES = {"WARMUP"}
++
++# Categories that may legally close a routine when the routine contains any
++# exertion segment (SAFE-811 / PROD-811). "Exertion" is any category other
++# than WARMUP, BREATHING, RELAXATION -- i.e. MOBILITY, LIGHT_STRENGTH,
++# STRETCH count as exertion for the purpose of requiring a calm close.
++CLOSING_CATEGORIES = {"COOLDOWN", "BREATHING"}
++NON_EXERTION_CATEGORIES = {"WARMUP", "BREATHING", "RELAXATION"}
++
++
++@dataclass(frozen=True)
++class RoutineSegment:
++    """One proposed segment: a catalog movement ID plus a duration.
++
++    This is exactly the shape the GUIDE model (G2, per D13) is permitted to
++    emit: an ID and a duration in seconds. It never carries movement text.
++    """
++
++    movement_id: str
++    duration_sec: int
++
++
++@dataclass(frozen=True)
++class ValidationResult:
++    passed: bool
++    failure_reasons: tuple[str, ...] = field(default_factory=tuple)
++
++    @property
++    def failed(self) -> bool:
++        return not self.passed
++
++
++def validate_routine(
++    segments: Iterable[RoutineSegment],
++    *,
++    catalog_by_id: dict[str, dict],
++    filtered_catalog_ids: set[str],
++    requested_budget_sec: int,
++    duration_tolerance_sec: int = DEFAULT_DURATION_TOLERANCE_SEC,
++) -> ValidationResult:
++    """Run all five deterministic checks from ARCHITECTURE_MVP_PLAN.md section 7.3.
++
++    Parameters
++    ----------
++    segments:
++        The proposed ordered routine as (movementId, durationSec) pairs --
++        exactly what a GUIDE generation call is allowed to return.
++    catalog_by_id:
++        The full, versioned movement catalog (shared/movement-catalog/catalog.json),
++        keyed by movement id, as authored under D17.
++    filtered_catalog_ids:
++        The subset of catalog ids that survived the precaution filter
++        (SAFE-032) applied BEFORE the AI call, per section 7.3's flow. A
++        movement whose id is in catalog_by_id but was filtered out for this
++        profile must still fail validation (check 2).
++    requested_budget_sec:
++        The user's requested time budget, to check total duration against
++        (PROD-121).
++    duration_tolerance_sec:
++        Allowed absolute deviation from requested_budget_sec.
++
++    Returns
++    -------
++    ValidationResult
++        passed=True only if every check passes. On any failure, passed=False
++        and failure_reasons lists every check that failed (not just the
++        first), so a validation-failure log entry is actually useful without
++        ever containing movement/clinical text (PRIV-1652).
++
++    This function never raises on a malformed proposal -- a malformed or
++    unsafe routine is a FAIL result, handled by the caller per D24 (discard,
++    serve a vetted preset, log the failure). Fail-closed (SAFE-920) means the
++    caller must treat "not passed" as "do not use," not that this function
++    fails open on an unexpected shape.
++    """
++
++    segments = list(segments)
++    reasons: list[str] = []
++
++    if not segments:
++        return ValidationResult(passed=False, failure_reasons=("empty_routine",))
++
++    # Check 1: every movementId exists in the catalog.
++    unknown_ids = [s.movement_id for s in segments if s.movement_id not in catalog_by_id]
++    if unknown_ids:
++        reasons.append("unknown_movement_id")
++
++    # Check 2: no movement was filtered out for this profile's precautions.
++    # Only evaluated for ids that do exist in the catalog -- an unknown id is
++    # already caught by check 1 and must not also be reported here.
++    filtered_out = [
++        s.movement_id
++        for s in segments
++        if s.movement_id in catalog_by_id and s.movement_id not in filtered_catalog_ids
++    ]
++    if filtered_out:
++        reasons.append("movement_excluded_by_precaution_filter")
++
++    # Checks 3-5 need category/duration-bounds lookups, which only make sense
++    # for ids that actually resolve in the catalog. If any id is unknown we
++    # still attempt the remaining checks against what does resolve, so a
++    # single bad id does not mask other independent problems.
++    resolved = [
++        (s, catalog_by_id[s.movement_id])
++        for s in segments
++        if s.movement_id in catalog_by_id
++    ]
++
++    # Check 3: opens with WARMUP; closes with COOLDOWN/BREATHING if the
++    # routine contains any exertion segment (SAFE-811 / PROD-811).
++    if resolved:
++        first_category = resolved[0][1]["category"]
++        last_category = resolved[-1][1]["category"]
++        has_exertion = any(
++            mv["category"] not in NON_EXERTION_CATEGORIES for _, mv in resolved
++        )
++
++        if first_category not in OPENING_CATEGORIES:
++            reasons.append("does_not_open_with_warmup")
++
++        if has_exertion and last_category not in CLOSING_CATEGORIES:
++            reasons.append("does_not_close_with_cooldown_or_breathing")
++
++    # Check 4: sum of durations within tolerance of the requested budget
++    # (PROD-121).
++    total_duration = sum(s.duration_sec for s in segments)
++    if abs(total_duration - requested_budget_sec) > duration_tolerance_sec:
++        reasons.append("total_duration_outside_tolerance")
++
++    # Check 5: each duration within the movement's own min/max (as authored
++    # in the catalog under D17).
++    out_of_bounds = [
++        s.movement_id
++        for s, mv in resolved
++        if not (mv["minDurationSec"] <= s.duration_sec <= mv["maxDurationSec"])
++    ]
++    if out_of_bounds:
++        reasons.append("duration_outside_movement_bounds")
++
++    return ValidationResult(passed=not reasons, failure_reasons=tuple(reasons))
++
++
++def load_catalog_by_id(catalog: dict) -> dict[str, dict]:
++    """Index a loaded catalog.json document by movement id."""
++
++    return {mv["id"]: mv for mv in catalog["movements"]}
++
++
++def filter_catalog_for_precautions(
++    catalog: dict, active_precaution_tags: set[str]
++) -> set[str]:
++    """Apply SAFE-032 as a deterministic filter, BEFORE any AI call.
++
++    Returns the set of movement ids that carry no contraindicationTag
++    present in the profile's active confirmed precaution tags. This is the
++    join described in ARCHITECTURE_MVP_PLAN.md section 7.1/7.3: a
++    Movement's `contraindicationTags` against a confirmed
++    Precaution.blocksMovementTags.
++    """
++
++    return {
++        mv["id"]
++        for mv in catalog["movements"]
++        if not set(mv.get("contraindicationTags", [])) & active_precaution_tags
++    }
+diff --git a/backend/tests/test_routine_validator.py b/backend/tests/test_routine_validator.py
+new file mode 100644
+index 0000000..ad2e41f
+--- /dev/null
++++ b/backend/tests/test_routine_validator.py
+@@ -0,0 +1,308 @@
++"""Tests for the deterministic GUIDE routine validator (D13/D14/D17, section 7.3).
++
++Per D29, these are the highest-value tests in the project: each one proves a
++safety boundary, not just a code path. Every test fails if the corresponding
++boundary breaks.
++"""
++
++import json
++from pathlib import Path
++
++import pytest
++
++from backend.guardrail.routine_validator import (
++    RoutineSegment,
++    filter_catalog_for_precautions,
++    load_catalog_by_id,
++    validate_routine,
++)
++
++CATALOG_PATH = (
++    Path(__file__).resolve().parents[2] / "shared" / "movement-catalog" / "catalog.json"
++)
++
++
++@pytest.fixture(scope="module")
++def catalog():
++    with open(CATALOG_PATH) as f:
++        return json.load(f)
++
++
++@pytest.fixture(scope="module")
++def catalog_by_id(catalog):
++    return load_catalog_by_id(catalog)
++
++
++@pytest.fixture()
++def unfiltered_ids(catalog_by_id):
++    return set(catalog_by_id.keys())
++
++
++# ---------------------------------------------------------------------------
++# Catalog authoring invariants (D17) -- these guard the *content*, since the
++# catalog itself is documented as "the safety boundary" and must hold even
++# before any validator logic runs against it.
++# ---------------------------------------------------------------------------
++
++
++def test_catalog_has_exactly_the_specified_composition(catalog):
++    expected = {
++        "WARMUP": 6,
++        "MOBILITY": 12,
++        "LIGHT_STRENGTH": 8,
++        "STRETCH": 10,
++        "BREATHING": 5,
++        "RELAXATION": 4,
++    }
++    counts: dict[str, int] = {}
++    for mv in catalog["movements"]:
++        counts[mv["category"]] = counts.get(mv["category"], 0) + 1
++    assert counts == expected
++    assert len(catalog["movements"]) == 45
++
++
++def test_catalog_has_no_high_intensity_movement(catalog):
++    # SAFE-030: low-to-moderate only. HIGH must never appear.
++    for mv in catalog["movements"]:
++        assert mv["intensity"] in {"VERY_LOW", "LOW", "MODERATE"}
++
++
++def test_catalog_movements_require_no_equipment(catalog):
++    for mv in catalog["movements"]:
++        assert mv["equipment"] == "NONE"
++
++
++def test_catalog_ids_are_unique(catalog):
++    ids = [mv["id"] for mv in catalog["movements"]]
++    assert len(ids) == len(set(ids))
++
++
++def test_catalog_gentler_variant_references_resolve(catalog):
++    ids = {mv["id"] for mv in catalog["movements"]}
++    for mv in catalog["movements"]:
++        variant = mv.get("gentlerVariantId")
++        if variant:
++            assert variant in ids, f"{mv['id']} points to missing {variant}"
++
++
++def test_catalog_min_max_bracket_default_duration(catalog):
++    for mv in catalog["movements"]:
++        assert mv["minDurationSec"] <= mv["defaultDurationSec"] <= mv["maxDurationSec"]
++
++
++# ---------------------------------------------------------------------------
++# validate_routine() -- the five deterministic checks (section 7.3, SAFE-917)
++# ---------------------------------------------------------------------------
++
++
++def _warmup_close_breathing_routine(catalog_by_id):
++    """A minimal, legitimately valid routine: WARMUP ... BREATHING, budget-matched."""
++    warmup_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
++    )
++    breathing_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "BREATHING"
++    )
++    segments = [
++        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
++        RoutineSegment(breathing_id, catalog_by_id[breathing_id]["defaultDurationSec"]),
++    ]
++    budget = sum(s.duration_sec for s in segments)
++    return segments, budget
++
++
++def test_valid_routine_passes(catalog_by_id, unfiltered_ids):
++    segments, budget = _warmup_close_breathing_routine(catalog_by_id)
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=budget,
++    )
++    assert result.passed, result.failure_reasons
++
++
++def test_unknown_movement_id_fails_closed(catalog_by_id, unfiltered_ids):
++    segments = [RoutineSegment("not_a_real_movement_id", 60)]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=60,
++    )
++    assert result.failed
++    assert "unknown_movement_id" in result.failure_reasons
++
++
++def test_movement_excluded_by_precaution_filter_fails_even_if_model_returns_it(
++    catalog_by_id, unfiltered_ids
++):
++    # This is the case that matters most: the model ignored the filtered
++    # catalog and returned an id that should have been excluded for this
++    # profile's confirmed precautions (SAFE-032). The validator must catch
++    # it independently of whatever the model did.
++    neck_movement_id = next(
++        mv["id"]
++        for mv in catalog_by_id.values()
++        if "no_neck_movement" in mv.get("contraindicationTags", [])
++    )
++    filtered_ids = filter_catalog_for_precautions(
++        {"movements": list(catalog_by_id.values())}, {"no_neck_movement"}
++    )
++    assert neck_movement_id not in filtered_ids  # sanity: the filter did its job
++
++    warmup_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
++    )
++    segments = [
++        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
++        RoutineSegment(
++            neck_movement_id, catalog_by_id[neck_movement_id]["defaultDurationSec"]
++        ),
++    ]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=filtered_ids,
++        requested_budget_sec=sum(s.duration_sec for s in segments),
++    )
++    assert result.failed
++    assert "movement_excluded_by_precaution_filter" in result.failure_reasons
++
++
++def test_routine_must_open_with_warmup(catalog_by_id, unfiltered_ids):
++    breathing_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "BREATHING"
++    )
++    segments = [
++        RoutineSegment(breathing_id, catalog_by_id[breathing_id]["defaultDurationSec"])
++    ]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=segments[0].duration_sec,
++    )
++    assert result.failed
++    assert "does_not_open_with_warmup" in result.failure_reasons
++
++
++def test_routine_with_exertion_must_close_with_cooldown_or_breathing(
++    catalog_by_id, unfiltered_ids
++):
++    warmup_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
++    )
++    mobility_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "MOBILITY"
++    )
++    # Opens correctly, but closes on an exertion segment (MOBILITY) instead
++    # of BREATHING/COOLDOWN -- must fail even though it opened correctly.
++    segments = [
++        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
++        RoutineSegment(mobility_id, catalog_by_id[mobility_id]["defaultDurationSec"]),
++    ]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=sum(s.duration_sec for s in segments),
++    )
++    assert result.failed
++    assert "does_not_close_with_cooldown_or_breathing" in result.failure_reasons
++
++
++def test_all_relaxation_or_breathing_routine_has_no_exertion_so_any_close_is_fine(
++    catalog_by_id, unfiltered_ids
++):
++    # A routine with zero exertion segments (e.g. warmup + relaxation) is not
++    # required to close on BREATHING/COOLDOWN, since SAFE-811/PROD-811 only
++    # impose that requirement "if any exertion segment present."
++    warmup_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
++    )
++    relax_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "RELAXATION"
++    )
++    segments = [
++        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
++        RoutineSegment(relax_id, catalog_by_id[relax_id]["defaultDurationSec"]),
++    ]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=sum(s.duration_sec for s in segments),
++    )
++    assert result.passed, result.failure_reasons
++
++
++def test_total_duration_outside_tolerance_fails(catalog_by_id, unfiltered_ids):
++    segments, budget = _warmup_close_breathing_routine(catalog_by_id)
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=budget + 1000,  # way outside PROD-121 tolerance
++    )
++    assert result.failed
++    assert "total_duration_outside_tolerance" in result.failure_reasons
++
++
++def test_duration_within_tolerance_boundary_passes(catalog_by_id, unfiltered_ids):
++    segments, budget = _warmup_close_breathing_routine(catalog_by_id)
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=budget + 60,  # exactly at the default tolerance
++    )
++    assert result.passed, result.failure_reasons
++
++
++def test_duration_outside_movement_bounds_fails(catalog_by_id, unfiltered_ids):
++    warmup_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
++    )
++    breathing_id = next(
++        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "BREATHING"
++    )
++    absurd_duration = catalog_by_id[warmup_id]["maxDurationSec"] + 10_000
++    segments = [
++        RoutineSegment(warmup_id, absurd_duration),
++        RoutineSegment(breathing_id, catalog_by_id[breathing_id]["defaultDurationSec"]),
++    ]
++    result = validate_routine(
++        segments,
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        # match the (absurd) total so this test isolates ONLY the
++        # per-movement bounds check, not the total-duration check.
++        requested_budget_sec=sum(s.duration_sec for s in segments),
++    )
++    assert result.failed
++    assert "duration_outside_movement_bounds" in result.failure_reasons
++
++
++def test_empty_routine_fails_closed(catalog_by_id, unfiltered_ids):
++    result = validate_routine(
++        [],
++        catalog_by_id=catalog_by_id,
++        filtered_catalog_ids=unfiltered_ids,
++        requested_budget_sec=600,
++    )
++    assert result.failed
++
++
++def test_filter_catalog_for_precautions_excludes_only_tagged_movements(catalog):
++    filtered = filter_catalog_for_precautions(catalog, {"avoid_standing"})
++    for mv in catalog["movements"]:
++        if "avoid_standing" in mv.get("contraindicationTags", []):
++            assert mv["id"] not in filtered
++        else:
++            assert mv["id"] in filtered
++
++
++def test_filter_catalog_for_precautions_is_noop_with_no_active_precautions(catalog):
++    filtered = filter_catalog_for_precautions(catalog, set())
++    assert filtered == {mv["id"] for mv in catalog["movements"]}
+diff --git a/shared/movement-catalog/catalog.json b/shared/movement-catalog/catalog.json
+new file mode 100644
+index 0000000..cd58301
+--- /dev/null
++++ b/shared/movement-catalog/catalog.json
+@@ -0,0 +1,959 @@
++{
++  "catalogVersion": "1.0.0",
++  "movements": [
++    {
++      "id": "warmup_seated_shoulder_rolls",
++      "name": "Seated shoulder rolls",
++      "category": "WARMUP",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat on the floor.",
++        "Slowly roll both shoulders up, back, and down.",
++        "Keep the movement smooth and unhurried."
++      ],
++      "contraindicationTags": [
++        "no_shoulder_movement",
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "warmup_standing_march_in_place",
++      "name": "Standing march in place (supported)",
++      "category": "WARMUP",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Lift one knee slightly, then the other, at a gentle pace.",
++        "Stop any time you feel unsteady."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge",
++        "no_exertion"
++      ],
++      "gentlerVariantId": "warmup_seated_shoulder_rolls",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "warmup_seated_arm_reaches",
++      "name": "Seated gentle arm reaches",
++      "category": "WARMUP",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall with arms relaxed at your sides.",
++        "Slowly reach both arms forward to shoulder height.",
++        "Lower them back down with control."
++      ],
++      "contraindicationTags": [
++        "no_overhead_reaching",
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "warmup_standing_side_bends_gentle",
++      "name": "Standing gentle side bends (supported)",
++      "category": "WARMUP",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand near a chair or counter for support.",
++        "Reach one arm gently overhead and lean slightly to the side.",
++        "Return to centre and repeat on the other side."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_overhead_reaching",
++        "avoid_twisting"
++      ],
++      "gentlerVariantId": "warmup_seated_arm_reaches",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "warmup_seated_ankle_circles",
++      "name": "Seated ankle circles",
++      "category": "WARMUP",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall and lift one foot slightly off the floor.",
++        "Circle the ankle slowly in one direction, then the other.",
++        "Switch to the other foot."
++      ],
++      "contraindicationTags": [
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "warmup_standing_gentle_torso_twist",
++      "name": "Standing gentle torso turn (supported)",
++      "category": "WARMUP",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Turn your upper body gently to one side, then the other.",
++        "Keep the turn small and controlled."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "avoid_twisting"
++      ],
++      "gentlerVariantId": "warmup_seated_ankle_circles",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_neck_rolls_seated",
++      "name": "Seated neck rolls",
++      "category": "MOBILITY",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Slowly turn your head to look right, then return to centre.",
++        "Repeat to the left, moving gently."
++      ],
++      "contraindicationTags": [
++        "no_neck_movement"
++      ],
++      "gentlerVariantId": "mob_neck_turns_seated",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_neck_turns_seated",
++      "name": "Seated gentle neck turns (small range)",
++      "category": "MOBILITY",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Turn your head a small amount to one side, then back to centre.",
++        "Repeat to the other side, keeping the movement small."
++      ],
++      "contraindicationTags": [
++        "no_neck_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_shoulder_circles_seated",
++      "name": "Seated shoulder circles",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall with arms relaxed.",
++        "Circle both shoulders slowly forward, then backward.",
++        "Keep the motion smooth."
++      ],
++      "contraindicationTags": [
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_wrist_circles_seated",
++      "name": "Seated wrist circles",
++      "category": "MOBILITY",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall and raise your hands in front of you.",
++        "Circle both wrists slowly in one direction, then the other."
++      ],
++      "contraindicationTags": [
++        "avoid_wrist_loading"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_seated_torso_twist_gentle",
++      "name": "Seated gentle torso turn",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall with feet flat.",
++        "Turn your upper body gently to one side, hands resting on your knees.",
++        "Return to centre and repeat to the other side."
++      ],
++      "contraindicationTags": [
++        "avoid_twisting"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_standing_hip_circles_supported",
++      "name": "Standing hip circles (supported)",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Move your hips in a small, slow circle.",
++        "Reverse direction after a few rounds."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_seated_knee_extensions",
++      "name": "Seated knee extensions",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Sit tall near the front of a stable chair.",
++        "Slowly straighten one knee, then lower it back down.",
++        "Repeat with the other leg."
++      ],
++      "contraindicationTags": [
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_standing_ankle_pumps_supported",
++      "name": "Standing ankle pumps (supported)",
++      "category": "MOBILITY",
++      "intensity": "VERY_LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Rise gently onto your toes, then lower your heels back down."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_seated_torso_side_reach",
++      "name": "Seated side reach",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Reach one arm gently up and over to the side.",
++        "Return to centre and repeat on the other side."
++      ],
++      "contraindicationTags": [
++        "no_overhead_reaching",
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_standing_arm_circles_supported",
++      "name": "Standing arm circles (supported)",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand near a chair or counter.",
++        "Circle both arms slowly forward, then backward, at shoulder height or lower."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_shoulder_movement",
++        "no_overhead_reaching"
++      ],
++      "gentlerVariantId": "mob_shoulder_circles_seated",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_seated_hip_marching",
++      "name": "Seated hip marching",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Lift one knee gently toward your chest, then lower it.",
++        "Alternate legs at an easy pace."
++      ],
++      "contraindicationTags": [
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "mob_standing_knee_lifts_supported",
++      "name": "Standing gentle knee lifts (supported)",
++      "category": "MOBILITY",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Lift one knee slightly, then lower it.",
++        "Alternate legs slowly."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge",
++        "no_exertion"
++      ],
++      "gentlerVariantId": "mob_seated_hip_marching",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_seated_leg_extensions",
++      "name": "Seated leg extensions",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Sit tall near the front of a stable chair.",
++        "Slowly straighten one leg out, hold briefly, then lower.",
++        "Repeat with the other leg."
++      ],
++      "contraindicationTags": [
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_standing_wall_pushups_supported",
++      "name": "Standing wall press (supported)",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand an arm's length from a wall, hands flat on it.",
++        "Bend your elbows slightly to lean toward the wall.",
++        "Push back gently to standing."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_exertion",
++        "avoid_wrist_loading"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_seated_arm_raises",
++      "name": "Seated arm raises",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall with arms relaxed.",
++        "Slowly raise both arms out to the side to shoulder height.",
++        "Lower them back down with control."
++      ],
++      "contraindicationTags": [
++        "no_shoulder_movement",
++        "no_overhead_reaching"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_standing_calf_raises_supported",
++      "name": "Standing calf raises (supported)",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Rise slowly onto your toes.",
++        "Lower your heels back down with control."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_sit_to_stand_supported",
++      "name": "Sit-to-stand (supported)",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "MODERATE",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit toward the front of a stable chair, hands on the armrests.",
++        "Press through your legs to stand up slowly.",
++        "Lower yourself back down with control."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_exertion",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": "strength_seated_leg_extensions",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_seated_overhead_reach_hold",
++      "name": "Seated gentle overhead reach",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall with arms relaxed.",
++        "Slowly raise both arms forward and slightly up, only as high as is comfortable.",
++        "Lower them back down with control."
++      ],
++      "contraindicationTags": [
++        "no_overhead_reaching",
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_standing_heel_to_toe_rock_supported",
++      "name": "Standing heel-to-toe rock (supported)",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Rock your weight gently forward onto your toes, then back onto your heels."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "strength_seated_knee_to_chest_gentle",
++      "name": "Seated gentle knee lift",
++      "category": "LIGHT_STRENGTH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Gently draw one knee toward your chest using your hands for support if helpful.",
++        "Lower and repeat with the other leg."
++      ],
++      "contraindicationTags": [
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_hamstring_reach",
++      "name": "Seated gentle hamstring reach",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Sit tall near the front of a stable chair.",
++        "Extend one leg forward with heel on the floor.",
++        "Lean forward gently from the hips until you feel a light stretch."
++      ],
++      "contraindicationTags": [
++        "no_forward_bending"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_neck_side_stretch_gentle",
++      "name": "Seated gentle neck side stretch",
++      "category": "STRETCH",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall.",
++        "Gently tilt your head toward one shoulder until you feel a light stretch.",
++        "Return to centre and repeat on the other side."
++      ],
++      "contraindicationTags": [
++        "no_neck_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_standing_calf_stretch_supported",
++      "name": "Standing calf stretch (supported)",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand facing a wall or stable counter, hands resting on it.",
++        "Step one foot back and press the heel gently toward the floor.",
++        "Hold, then switch sides."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_shoulder_cross_body",
++      "name": "Seated cross-body shoulder stretch",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall.",
++        "Gently bring one arm across your chest, supporting it lightly with the other hand.",
++        "Hold, then switch sides."
++      ],
++      "contraindicationTags": [
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_standing_quad_stretch_supported",
++      "name": "Standing gentle quad stretch (supported)",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand holding a stable chair or counter with one hand.",
++        "Gently bring one heel toward your seat if comfortable, holding with your free hand.",
++        "Hold lightly, then switch sides."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge",
++        "no_exertion"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_ankle_stretch",
++      "name": "Seated ankle stretch",
++      "category": "STRETCH",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall and extend one leg slightly.",
++        "Gently point and then flex your foot.",
++        "Repeat with the other foot."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_standing_chest_opener_supported",
++      "name": "Standing gentle chest opener (supported)",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Stand near a chair or counter for balance.",
++        "Gently draw your shoulders back and open your chest.",
++        "Hold for a few breaths, then relax."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_upper_back_reach",
++      "name": "Seated upper back reach",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall.",
++        "Clasp your hands loosely in front of you and round gently forward through the upper back.",
++        "Hold lightly, then release."
++      ],
++      "contraindicationTags": [
++        "no_forward_bending",
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_seated_side_stretch_gentle",
++      "name": "Seated gentle side stretch",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit tall, feet flat.",
++        "Reach one arm gently overhead and lean slightly to that side.",
++        "Return to centre and repeat on the other side."
++      ],
++      "contraindicationTags": [
++        "no_overhead_reaching",
++        "avoid_twisting"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "stretch_standing_hip_flexor_gentle_supported",
++      "name": "Standing gentle hip stretch (supported)",
++      "category": "STRETCH",
++      "intensity": "LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand holding a stable chair or counter.",
++        "Step one foot slightly back and gently shift your weight forward until you feel a light stretch at the front of the hip.",
++        "Hold, then switch sides."
++      ],
++      "contraindicationTags": [
++        "avoid_standing",
++        "no_balance_challenge"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "breathing_seated_diaphragmatic",
++      "name": "Seated relaxed breathing",
++      "category": "BREATHING",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 90,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably with your hands resting gently on your stomach.",
++        "Breathe in slowly through your nose, feeling your stomach rise.",
++        "Breathe out slowly, feeling your stomach lower. No holding your breath."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "breathing_seated_slow_count_breathing",
++      "name": "Seated slow counted breathing",
++      "category": "BREATHING",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 90,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably.",
++        "Breathe in gently for a slow count of three.",
++        "Breathe out gently for a slow count of three. Never force or hold the breath."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "breathing_seated_relaxed_belly_breathing",
++      "name": "Seated relaxed belly breathing",
++      "category": "BREATHING",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 90,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably with shoulders relaxed.",
++        "Let each breath in and out be slow, soft, and unforced.",
++        "If your mind wanders, gently return attention to your breath."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "breathing_standing_calming_breath_supported",
++      "name": "Standing calming breath (supported)",
++      "category": "BREATHING",
++      "intensity": "VERY_LOW",
++      "position": "STANDING_SUPPORTED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Stand comfortably, holding a chair or counter if helpful.",
++        "Breathe in slowly through your nose.",
++        "Breathe out slowly through your mouth, relaxing your shoulders."
++      ],
++      "contraindicationTags": [
++        "avoid_standing"
++      ],
++      "gentlerVariantId": "breathing_seated_relaxed_belly_breathing",
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "breathing_seated_extended_exhale_gentle",
++      "name": "Seated gentle extended exhale",
++      "category": "BREATHING",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 90,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably.",
++        "Breathe in gently through your nose.",
++        "Let your breath out slowly and a little longer than the inhale, without straining."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "relax_seated_shoulder_release",
++      "name": "Seated shoulder release",
++      "category": "RELAXATION",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 60,
++      "minDurationSec": 30,
++      "maxDurationSec": 120,
++      "instructionLines": [
++        "Sit comfortably.",
++        "Gently lift your shoulders toward your ears, then let them drop and relax.",
++        "Repeat slowly a few times."
++      ],
++      "contraindicationTags": [
++        "no_shoulder_movement"
++      ],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "relax_seated_eyes_closed_stillness",
++      "name": "Seated quiet stillness",
++      "category": "RELAXATION",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 90,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably with your eyes closed if that feels right.",
++        "Let your body settle and your breathing stay natural.",
++        "Simply rest in this stillness."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "relax_seated_hand_release",
++      "name": "Seated hand and finger release",
++      "category": "RELAXATION",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 45,
++      "minDurationSec": 30,
++      "maxDurationSec": 90,
++      "instructionLines": [
++        "Sit comfortably.",
++        "Gently open and close your hands a few times.",
++        "Let your hands rest loosely in your lap."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    },
++    {
++      "id": "relax_seated_body_scan_gentle",
++      "name": "Seated gentle body scan",
++      "category": "RELAXATION",
++      "intensity": "VERY_LOW",
++      "position": "SEATED",
++      "defaultDurationSec": 120,
++      "minDurationSec": 60,
++      "maxDurationSec": 180,
++      "instructionLines": [
++        "Sit comfortably with eyes open or closed.",
++        "Bring gentle attention to your feet, then slowly move attention upward through your body.",
++        "Let each part relax as you notice it."
++      ],
++      "contraindicationTags": [],
++      "gentlerVariantId": null,
++      "equipment": "NONE",
++      "catalogVersion": "1.0.0"
++    }
++  ]
++}
+-- 
+2.43.0
+

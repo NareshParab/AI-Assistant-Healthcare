@@ -1,0 +1,49 @@
+# ── Secrets / environment (PRIV-1641: excluded from the first commit onward) ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+secrets/
+credentials/
+
+# ── Android / Gradle build artifacts ──
+firetv/**/build/
+firetv/.gradle/
+firetv/captures/
+firetv/local.properties
+firetv/*.apk
+firetv/*.aab
+*.apk
+*.aab
+
+# ── IDE / editor ──
+.idea/
+*.iml
+.vscode/
+
+# ── OS noise ──
+.DS_Store
+Thumbs.db
+
+# ── Debug/build logs (ephemeral, not source) ──
+firetv/build_output.log
+*.log
+logs/
+
+# ── Claude Code harness session state (not project content) ──
+.claude/
+
+# ── Python (backend/, added for P4) ──
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ── Backend runtime artifacts (added for P4; none exist yet, standing safety net) ──
+backend/*.db
+backend/*.sqlite3
+backend/blobs/

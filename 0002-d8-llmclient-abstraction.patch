@@ -1,0 +1,865 @@
+From d927babe27d76bd3b9fe6dbf9977b45017b067eb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 13:23:41 +0000
+Subject: [PATCH] feat: add D8 LlmClient abstraction with D11 bounded-retry
+ fail-closed loop
+
+Day 6 backend work, no dependency on physical Fire TV hardware, Android
+toolchain, or the current P2 emulator blocker.
+
+- backend/ai/client/base.py: abstract LlmClient with the D11 contract
+  implemented once, shared by every provider: strict-schema structured
+  calls, bounded retry (2), fail-closed on exhaustion. A provider subclass
+  only implements "ask the model once" -- retry/validate/fail-closed logic
+  cannot be duplicated or forgotten per provider.
+- backend/ai/client/anthropic_client.py: the locked D8 provider, using
+  tool-use to force schema-shaped output. Reads ANTHROPIC_API_KEY from the
+  environment only (D25/PRIV-1640); refuses to construct without one
+  (LlmNotConfiguredError) rather than degrading silently. anthropic SDK is
+  imported lazily so it is not required to run the test suite.
+- backend/ai/client/operations.py: named AI operations mapped to exactly
+  one regime (SAFE-900) and one task-appropriate model (D8) -- sonnet-5 for
+  document structuring (accuracy-critical, feeds D16 confirmation review),
+  haiku-4-5 for narrower/latency-sensitive transforms and sequencing.
+- backend/ai/client/results.py: StructuredCallResult + to_audit_log_entry(),
+  whose return type is structurally incapable of carrying prompt/response
+  content (PRIV-1652) -- the projection has no such field to leak.
+- backend/ai/client/fake_client.py: deterministic test double (used only by
+  backend/tests/test_llm_client.py); no network or API key needed to test
+  this module.
+- backend/requirements.txt: + jsonschema (D11 server-side validation),
+  + anthropic (D8, lazily imported).
+
+Verification: 42/42 backend tests pass (24 pre-existing + 18 new), including
+with the `anthropic` package NOT installed, confirming the lazy-import
+isolation holds. No secrets, no clinical content, no unrelated files
+touched. This does not implement ASSIST or GUIDE application logic (D12/D13)
+-- those remain separate, later modules per the locked "no shared ai.call()
+helper" rule; this is the shared transport layer only. P1 physical
+validation and P2 remain untouched and PENDING.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01SXvQoaAcWj32wt2R91y7r3
+---
+ backend/ai/__init__.py                |   0
+ backend/ai/client/__init__.py         |   0
+ backend/ai/client/anthropic_client.py | 108 ++++++++++++
+ backend/ai/client/base.py             | 128 ++++++++++++++
+ backend/ai/client/errors.py           |  28 +++
+ backend/ai/client/fake_client.py      |  39 +++++
+ backend/ai/client/operations.py       |  71 ++++++++
+ backend/ai/client/results.py          |  62 +++++++
+ backend/ai/client/schema_spec.py      |  37 ++++
+ backend/requirements.txt              |  15 +-
+ backend/tests/test_llm_client.py      | 240 ++++++++++++++++++++++++++
+ 11 files changed, 724 insertions(+), 4 deletions(-)
+ create mode 100644 backend/ai/__init__.py
+ create mode 100644 backend/ai/client/__init__.py
+ create mode 100644 backend/ai/client/anthropic_client.py
+ create mode 100644 backend/ai/client/base.py
+ create mode 100644 backend/ai/client/errors.py
+ create mode 100644 backend/ai/client/fake_client.py
+ create mode 100644 backend/ai/client/operations.py
+ create mode 100644 backend/ai/client/results.py
+ create mode 100644 backend/ai/client/schema_spec.py
+ create mode 100644 backend/tests/test_llm_client.py
+
+diff --git a/backend/ai/__init__.py b/backend/ai/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/ai/client/__init__.py b/backend/ai/client/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/ai/client/anthropic_client.py b/backend/ai/client/anthropic_client.py
+new file mode 100644
+index 0000000..98a38fa
+--- /dev/null
++++ b/backend/ai/client/anthropic_client.py
+@@ -0,0 +1,108 @@
++"""The Anthropic provider implementation of LlmClient (D8).
++
++This is the only file in the repository that imports the `anthropic` SDK
++directly, and the only file that reads `ANTHROPIC_API_KEY`. Swapping
++provider later (D8's stated reversibility) means writing a sibling file, not
++touching call sites.
++
++Credentials (D25/PRIV-1640): read from the environment only, never a
++default, never hardcoded, never logged. If the key is absent, construction
++fails loudly (LlmNotConfiguredError) rather than silently degrading -- there
++is no "try without a key" path, consistent with fail-closed (SAFE-920).
++
++Structured output (D11): uses tool-use with a single forced tool whose input
++schema IS the requested SchemaSpec, so the provider is constrained at
++generation time, not just checked after the fact. Whatever comes back is
++still run through SchemaSpec.validate() by the shared base class -- this
++class never trusts "the provider used the tool" as proof of validity.
++
++PRIV-1622 [VERIFY BEFORE SUBMISSION]: confirm current Anthropic API terms
++permit the account's usage tier before any non-synthetic document content is
++ever sent through this client. Until that is confirmed and recorded, only
++synthetic demo documents (HACK-980) may be passed as input_data.
++"""
++
++from __future__ import annotations
++
++import os
++from typing import Any
++
++from .base import LlmClient
++from .errors import LlmNotConfiguredError, LlmTransportError
++from .schema_spec import SchemaSpec
++
++_TOOL_NAME = "emit_structured_output"
++
++
++class AnthropicLlmClient(LlmClient):
++    def __init__(self, *, api_key: str | None = None):
++        # Explicit param wins (useful for tests that DO want to hit a real
++        # client class with a fake key path exercised elsewhere); otherwise
++        # read from the environment. Never a hardcoded fallback (D25).
++        resolved_key = api_key if api_key is not None else os.environ.get("ANTHROPIC_API_KEY")
++        if not resolved_key:
++            raise LlmNotConfiguredError(
++                "ANTHROPIC_API_KEY is not set. Per D25/PRIV-1640, credentials are "
++                "supplied via environment variables only; this client refuses to "
++                "run without one rather than degrade silently."
++            )
++        self._api_key = resolved_key
++        self._sdk_client = None  # constructed lazily so importing this module
++
++        # never requires the `anthropic` package to be installed to run the
++        # rest of the AI-client test suite (FakeLlmClient covers that path).
++
++    def _client(self):
++        if self._sdk_client is None:
++            import anthropic  # local import: keep the SDK optional at module load
++
++            self._sdk_client = anthropic.Anthropic(api_key=self._api_key)
++        return self._sdk_client
++
++    def _raw_call(
++        self,
++        *,
++        model: str,
++        system_prompt: str,
++        input_data: dict[str, Any],
++        schema: SchemaSpec,
++    ) -> dict[str, Any]:
++        try:
++            response = self._client().messages.create(
++                model=model,
++                max_tokens=4096,
++                system=system_prompt,
++                tools=[
++                    {
++                        "name": _TOOL_NAME,
++                        "description": (
++                            f"Emit output conforming exactly to the "
++                            f"'{schema.name}' v{schema.version} schema."
++                        ),
++                        "input_schema": schema.json_schema,
++                    }
++                ],
++                tool_choice={"type": "tool", "name": _TOOL_NAME},
++                messages=[
++                    {
++                        "role": "user",
++                        "content": self._render_input(input_data),
++                    }
++                ],
++            )
++        except Exception as exc:  # provider/network/auth failures, all bounded-retried
++            raise LlmTransportError(str(exc)) from exc
++
++        for block in response.content:
++            if getattr(block, "type", None) == "tool_use" and block.name == _TOOL_NAME:
++                return block.input
++
++        raise LlmTransportError("provider response contained no tool_use block")
++
++    @staticmethod
++    def _render_input(input_data: dict[str, Any]) -> str:
++        # Deliberately NOT logged anywhere (PRIV-1652). This only ever
++        # travels to the provider over the API call itself.
++        import json
++
++        return json.dumps(input_data)
+diff --git a/backend/ai/client/base.py b/backend/ai/client/base.py
+new file mode 100644
+index 0000000..662a09c
+--- /dev/null
++++ b/backend/ai/client/base.py
+@@ -0,0 +1,128 @@
++"""LlmClient abstraction (D8) and the shared bounded-retry / fail-closed loop (D11).
++
++D8 locks this as the ONLY path by which backend code reaches an AI provider:
++"The Fire TV client never holds a key and never calls a provider directly.
++One interface, one place to swap." A provider is swapped by writing a new
++subclass of LlmClient; nothing else in the codebase should ever import a
++provider SDK directly.
++
++The retry/validate/fail-closed loop (D11: strict schema, bounded retry of 2,
++fail-closed on exhaustion) is implemented ONCE here, in call_structured(),
++not duplicated per provider. Subclasses implement only `_raw_call()` -- "ask
++the model for output matching this schema, once" -- and this base class
++handles validation, retrying, latency measurement, and turning exhaustion
++into a FAILED_CLOSED result rather than an exception the caller has to
++remember to catch.
++
++Note on D12: this shared transport is intentionally reusable across ASSIST
++and GUIDE (that is the point of D8's "one interface" hedge). It is NOT the
++"ai.call()" helper D12 prohibits -- that prohibition is about ASSIST-specific
++and GUIDE-specific application code (backend/ai/assist/, backend/ai/guide/,
++not yet built) staying in separate modules with separate prompts and
++schemas. Both of those modules will call through this same transport, the
++same way two independent services can share one HTTP client library.
++"""
++
++from __future__ import annotations
++
++import time
++from abc import ABC, abstractmethod
++from typing import Any
++
++from .errors import LlmTransportError, SchemaValidationError
++from .operations import Operation, model_for
++from .results import StructuredCallResult
++from .schema_spec import SchemaSpec
++
++MAX_RETRIES_DEFAULT = 2  # D11: "a bounded retry of 2"
++
++
++class LlmClient(ABC):
++    """Base class for every AI provider integration in this system."""
++
++    @abstractmethod
++    def _raw_call(
++        self,
++        *,
++        model: str,
++        system_prompt: str,
++        input_data: dict[str, Any],
++        schema: SchemaSpec,
++    ) -> dict[str, Any]:
++        """Ask the provider for one structured response matching `schema`.
++
++        Implementations should use the provider's structured-output / tool-use
++        mechanism (not free-text parsing, per D11) to make malformed output
++        the exception rather than the norm. May raise LlmTransportError on
++        any provider-level failure (network, auth, rate limit, etc.);
++        anything the schema then rejects should be RETURNED (so the base
++        class can validate and log it), not raised.
++        """
++
++    def call_structured(
++        self,
++        *,
++        operation: Operation,
++        schema: SchemaSpec,
++        system_prompt: str,
++        input_data: dict[str, Any],
++        max_retries: int = MAX_RETRIES_DEFAULT,
++    ) -> StructuredCallResult:
++        """Run the operation with bounded retry and fail-closed on exhaustion.
++
++        This is the one method application code (future ASSIST/GUIDE
++        modules) should call. It never raises for a malformed or
++        provider-failing call -- exhaustion is represented as a
++        FAILED_CLOSED result, which is what D24's per-operation fallback
++        table is keyed on. It CAN raise for a programming error (unknown
++        operation), which is not a runtime/provider condition.
++        """
++
++        model = model_for(operation)
++        start = time.monotonic()
++        last_error_class: str | None = None
++        attempts = max_retries + 1  # "2 retries" = 3 attempts total
++
++        for attempt in range(attempts):
++            try:
++                raw_output = self._raw_call(
++                    model=model,
++                    system_prompt=system_prompt,
++                    input_data=input_data,
++                    schema=schema,
++                )
++            except LlmTransportError as exc:
++                last_error_class = type(exc).__name__
++                continue
++
++            validation_errors = schema.validate(raw_output)
++            if not validation_errors:
++                latency_ms = (time.monotonic() - start) * 1000
++                return StructuredCallResult(
++                    operation=operation,
++                    schema_name=schema.name,
++                    schema_version=schema.version,
++                    model=model,
++                    output=raw_output,
++                    validation_outcome="PASSED",
++                    retry_count=attempt,
++                    latency_ms=latency_ms,
++                    error_class=None,
++                )
++
++            last_error_class = SchemaValidationError.__name__
++
++        # Retries exhausted: fail closed (SAFE-920, D11). No output is
++        # returned under any circumstance past this point.
++        latency_ms = (time.monotonic() - start) * 1000
++        return StructuredCallResult(
++            operation=operation,
++            schema_name=schema.name,
++            schema_version=schema.version,
++            model=model,
++            output=None,
++            validation_outcome="FAILED_CLOSED",
++            retry_count=attempts - 1,
++            latency_ms=latency_ms,
++            error_class=last_error_class,
++        )
+diff --git a/backend/ai/client/errors.py b/backend/ai/client/errors.py
+new file mode 100644
+index 0000000..9f81bf2
+--- /dev/null
++++ b/backend/ai/client/errors.py
+@@ -0,0 +1,28 @@
++"""Error types for the LlmClient abstraction (D8/D11)."""
++
++from __future__ import annotations
++
++
++class LlmTransportError(Exception):
++    """The underlying provider call itself failed (network, auth, provider
++    outage, etc.) -- distinct from a schema-validation failure. Both are
++    retried the same bounded number of times and both end in fail-closed
++    (D11) if retries are exhausted.
++    """
++
++
++class SchemaValidationError(Exception):
++    """A single call's output did not validate against the requested schema."""
++
++    def __init__(self, message: str, *, validation_errors: list[str] | None = None):
++        super().__init__(message)
++        self.validation_errors = validation_errors or []
++
++
++class LlmNotConfiguredError(Exception):
++    """Raised when a real provider client is used without credentials.
++
++    D25: the backend never falls back to a hardcoded or default key. Missing
++    configuration is a fail-closed condition, not a soft-degrade -- there is
++    no "try without a key" path.
++    """
+diff --git a/backend/ai/client/fake_client.py b/backend/ai/client/fake_client.py
+new file mode 100644
+index 0000000..257222d
+--- /dev/null
++++ b/backend/ai/client/fake_client.py
+@@ -0,0 +1,39 @@
++"""A deterministic, no-network LlmClient test double.
++
++Used by this repository's own test suite so tests never depend on network
++access, an API key, or a live provider (and never spend real API budget).
++Not used by any production code path. Construct it with a queue of canned
++raw responses (dicts, or exceptions to simulate a transport failure); each
++call to `_raw_call` pops the next one.
++"""
++
++from __future__ import annotations
++
++from collections import deque
++from typing import Any
++
++from .base import LlmClient
++from .errors import LlmTransportError
++from .schema_spec import SchemaSpec
++
++
++class FakeLlmClient(LlmClient):
++    def __init__(self, scripted_responses: list[dict[str, Any] | Exception]):
++        self._queue: deque[dict[str, Any] | Exception] = deque(scripted_responses)
++        self.calls_made = 0
++
++    def _raw_call(
++        self,
++        *,
++        model: str,
++        system_prompt: str,
++        input_data: dict[str, Any],
++        schema: SchemaSpec,
++    ) -> dict[str, Any]:
++        self.calls_made += 1
++        if not self._queue:
++            raise LlmTransportError("FakeLlmClient script exhausted")
++        next_item = self._queue.popleft()
++        if isinstance(next_item, Exception):
++            raise next_item
++        return next_item
+diff --git a/backend/ai/client/operations.py b/backend/ai/client/operations.py
+new file mode 100644
+index 0000000..fe793bc
+--- /dev/null
++++ b/backend/ai/client/operations.py
+@@ -0,0 +1,71 @@
++"""Named AI operations and their per-task model assignment (D8).
++
++Every AI call in the system must go through one of these named operations --
++there is no free-form "call the model with any prompt" path. Naming the
++operation is what makes the audit log (AIRequestLog / PRIV-1652) and the
++ASSIST/GUIDE regime split (SAFE-900, D12/D13) enforceable rather than
++aspirational.
++
++Model selection is task-appropriate per D8: a capable model where accuracy
++matters most (document structuring, which drives confirmation review), a
++faster model where the task is narrower and latency matters more
++(plain-language transform, summarization, routine interpretation/sequencing).
++This mapping is the ONLY place a model name is chosen -- callers ask for an
++operation, never a model.
++"""
++
++from __future__ import annotations
++
++from enum import Enum
++
++
++class Regime(str, Enum):
++    """The two AI regimes (SAFE-900). Every operation belongs to exactly one."""
++
++    ASSIST = "ASSIST"
++    GUIDE = "GUIDE"
++
++
++class Operation(str, Enum):
++    # ASSIST (D12) -- transform-only, output is always a proposal (SAFE-913)
++    ASSIST_DOCUMENT_STRUCTURING = "assist.document_structuring"  # A1
++    ASSIST_PLAIN_LANGUAGE = "assist.plain_language"  # A2, "What this says"
++    ASSIST_SUMMARY_INTERPRETATION = "assist.summary_interpretation"  # A3, region 4 only
++
++    # GUIDE (D13) -- catalog-constrained selection/sequencing, IDs only
++    GUIDE_REQUEST_INTERPRETATION = "guide.request_interpretation"  # G1
++    GUIDE_ROUTINE_GENERATION = "guide.routine_generation"  # G2
++
++
++# D12: ASSIST and GUIDE are physically separate regimes. This mapping is what
++# SAFE-900 ("every AI operation assigned to exactly one regime") means in
++# code -- it is consulted by the audit-log builder, never guessed.
++OPERATION_REGIME: dict[Operation, Regime] = {
++    Operation.ASSIST_DOCUMENT_STRUCTURING: Regime.ASSIST,
++    Operation.ASSIST_PLAIN_LANGUAGE: Regime.ASSIST,
++    Operation.ASSIST_SUMMARY_INTERPRETATION: Regime.ASSIST,
++    Operation.GUIDE_REQUEST_INTERPRETATION: Regime.GUIDE,
++    Operation.GUIDE_ROUTINE_GENERATION: Regime.GUIDE,
++}
++
++# D8: task-appropriate model per operation. Document structuring is the one
++# operation whose output feeds the human confirmation gate (D16) most
++# directly and where transcription accuracy (e.g. verbatim dose text,
++# SAFE-504) matters most, so it gets the more capable model. Everything else
++# here is a narrower, lower-stakes transform or a sequencing task over a
++# small fixed catalog, so it gets the faster model.
++OPERATION_MODEL: dict[Operation, str] = {
++    Operation.ASSIST_DOCUMENT_STRUCTURING: "claude-sonnet-5",
++    Operation.ASSIST_PLAIN_LANGUAGE: "claude-haiku-4-5",
++    Operation.ASSIST_SUMMARY_INTERPRETATION: "claude-haiku-4-5",
++    Operation.GUIDE_REQUEST_INTERPRETATION: "claude-haiku-4-5",
++    Operation.GUIDE_ROUTINE_GENERATION: "claude-haiku-4-5",
++}
++
++
++def regime_for(operation: Operation) -> Regime:
++    return OPERATION_REGIME[operation]
++
++
++def model_for(operation: Operation) -> str:
++    return OPERATION_MODEL[operation]
+diff --git a/backend/ai/client/results.py b/backend/ai/client/results.py
+new file mode 100644
+index 0000000..eeeb92a
+--- /dev/null
++++ b/backend/ai/client/results.py
+@@ -0,0 +1,62 @@
++"""Result type returned by every LlmClient call, and its audit-log projection.
++
++PRIV-1652 is the load-bearing rule here: prompts in this product contain
++clinical text, so logging a prompt or response body is itself a PHI leak.
++StructuredCallResult intentionally has no field that can hold prompt or
++response content -- `output` is the validated structured payload used by the
++caller, not something written to AIRequestLog. `to_audit_log_entry()` is the
++ONLY sanctioned way to turn a result into something logged, and its return
++type is structurally incapable of carrying clinical content because the
++fields it reads from never held any.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any
++
++from .operations import Operation, regime_for
++
++
++@dataclass(frozen=True)
++class StructuredCallResult:
++    operation: Operation
++    schema_name: str
++    schema_version: str
++    model: str
++    output: dict[str, Any] | None  # None iff failed_closed
++    validation_outcome: str  # "PASSED" | "FAILED_CLOSED"
++    retry_count: int
++    latency_ms: float
++    error_class: str | None = None
++
++    def __post_init__(self) -> None:
++        if self.validation_outcome not in {"PASSED", "FAILED_CLOSED"}:
++            raise ValueError(f"invalid validation_outcome: {self.validation_outcome!r}")
++        if self.validation_outcome == "PASSED" and self.output is None:
++            raise ValueError("PASSED result must carry output")
++        if self.validation_outcome == "FAILED_CLOSED" and self.output is not None:
++            raise ValueError("FAILED_CLOSED result must not carry output (D11 fail-closed)")
++
++    @property
++    def failed_closed(self) -> bool:
++        return self.validation_outcome == "FAILED_CLOSED"
++
++
++def to_audit_log_entry(result: StructuredCallResult) -> dict[str, Any]:
++    """Project a result to exactly the fields AIRequestLog is allowed to hold.
++
++    Identifiers, counts, durations, validation outcomes, error classes --
++    never a prompt or response body (PRIV-1652), never clinical content.
++    """
++
++    return {
++        "regime": regime_for(result.operation).value,
++        "operation": result.operation.value,
++        "schemaVersion": result.schema_version,
++        "model": result.model,
++        "latencyMs": result.latency_ms,
++        "validationOutcome": result.validation_outcome,
++        "retryCount": result.retry_count,
++        "errorClass": result.error_class,
++    }
+diff --git a/backend/ai/client/schema_spec.py b/backend/ai/client/schema_spec.py
+new file mode 100644
+index 0000000..5f22877
+--- /dev/null
++++ b/backend/ai/client/schema_spec.py
+@@ -0,0 +1,37 @@
++"""Structured-output schema wrapper (D11).
++
++A SchemaSpec is the one artifact shared between "what we ask the provider
++for" (tool-use / structured-output configuration) and "what we validate the
++response against" -- so the two can never silently drift apart. Every AI
++operation that returns structured data references exactly one SchemaSpec,
++and the version travels with every result for auditability (D17-style
++versioning discipline, applied here to AI schemas).
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any
++
++import jsonschema
++
++
++@dataclass(frozen=True)
++class SchemaSpec:
++    name: str
++    version: str
++    json_schema: dict[str, Any]
++
++    def validate(self, candidate: Any) -> list[str]:
++        """Return a list of human-readable validation error strings.
++
++        Empty list means valid. Never raises on a malformed candidate --
++        validation failure is data (used to decide retry / fail-closed), not
++        a control-flow exception at this layer.
++        """
++
++        validator = jsonschema.Draft202012Validator(self.json_schema)
++        return [
++            f"{'/'.join(str(p) for p in err.path) or '<root>'}: {err.message}"
++            for err in sorted(validator.iter_errors(candidate), key=lambda e: list(e.path))
++        ]
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 7383237..478356e 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -1,13 +1,20 @@
+-# P4 Document Evidence POC — minimal dependency set.
+-# No AI/LLM client, no database driver: out of scope for this checkpoint
+-# per ARCHITECTURE_MVP_PLAN.md D4/D5 (P4 only) and the current task's
+-# explicit scope limits.
++# P4 Document Evidence POC dependencies, plus the D8 LlmClient abstraction's
++# minimal additions. No database driver: out of scope per D4/D5.
+ 
+ fastapi>=0.115,<1.0
+ uvicorn>=0.30,<1.0
+ pymupdf>=1.24,<2.0
+ pillow>=10.0
+ 
++# D11: server-side structured-output schema validation for the LlmClient
++# abstraction. Single-purpose, standard library for this exact job.
++jsonschema>=4.20,<5.0
++
++# D8: the locked AI provider SDK. Imported lazily by
++# backend/ai/client/anthropic_client.py so the test suite (which uses
++# FakeLlmClient exclusively) does not require it to be installed.
++anthropic>=0.40,<1.0
++
+ # Test-only
+ pytest>=8.0,<9.0
+ httpx>=0.27,<1.0
+diff --git a/backend/tests/test_llm_client.py b/backend/tests/test_llm_client.py
+new file mode 100644
+index 0000000..47c4908
+--- /dev/null
++++ b/backend/tests/test_llm_client.py
+@@ -0,0 +1,240 @@
++"""Tests for the D8 LlmClient abstraction and D11's retry/fail-closed contract.
++
++Uses FakeLlmClient exclusively -- no network, no API key, no real provider
++call anywhere in this file (consistent with keeping the test suite runnable
++without credentials, and with never spending real API budget on tests).
++"""
++
++from __future__ import annotations
++
++import pytest
++
++from backend.ai.client.errors import LlmNotConfiguredError, LlmTransportError
++from backend.ai.client.fake_client import FakeLlmClient
++from backend.ai.client.operations import Operation, Regime, model_for, regime_for
++from backend.ai.client.results import to_audit_log_entry
++from backend.ai.client.schema_spec import SchemaSpec
++
++SIMPLE_SCHEMA = SchemaSpec(
++    name="test.simple",
++    version="1.0.0",
++    json_schema={
++        "type": "object",
++        "properties": {"value": {"type": "string"}},
++        "required": ["value"],
++        "additionalProperties": False,
++    },
++)
++
++
++def _call(client: FakeLlmClient, operation: Operation = Operation.GUIDE_REQUEST_INTERPRETATION):
++    return client.call_structured(
++        operation=operation,
++        schema=SIMPLE_SCHEMA,
++        system_prompt="irrelevant for this test",
++        input_data={"whatever": "irrelevant for this test"},
++    )
++
++
++def test_valid_first_attempt_passes_with_zero_retries():
++    client = FakeLlmClient([{"value": "ok"}])
++    result = _call(client)
++    assert result.validation_outcome == "PASSED"
++    assert result.output == {"value": "ok"}
++    assert result.retry_count == 0
++    assert not result.failed_closed
++
++
++def test_recovers_after_one_malformed_response():
++    client = FakeLlmClient(
++        [
++            {"value": 123},  # wrong type -> validation failure, retried
++            {"value": "ok"},  # valid on retry
++        ]
++    )
++    result = _call(client)
++    assert result.validation_outcome == "PASSED"
++    assert result.retry_count == 1
++    assert client.calls_made == 2
++
++
++def test_fails_closed_after_exhausting_retries_never_returns_malformed_output():
++    # D11: bounded retry of 2 => 3 attempts total. All three malformed.
++    client = FakeLlmClient(
++        [
++            {"value": 1},
++            {"value": 2},
++            {"value": 3},
++        ]
++    )
++    result = _call(client)
++    assert result.failed_closed
++    assert result.validation_outcome == "FAILED_CLOSED"
++    assert result.output is None  # the hard guarantee: never a malformed payload
++    assert client.calls_made == 3
++
++
++def test_transport_failures_count_toward_the_same_bounded_retry():
++    client = FakeLlmClient(
++        [
++            LlmTransportError("network blip"),
++            LlmTransportError("network blip again"),
++            LlmTransportError("still down"),
++        ]
++    )
++    result = _call(client)
++    assert result.failed_closed
++    assert result.error_class == "LlmTransportError"
++    assert client.calls_made == 3
++
++
++def test_mixed_transport_and_validation_failures_still_recover_within_budget():
++    client = FakeLlmClient(
++        [
++            LlmTransportError("transient"),
++            {"value": "ok"},
++        ]
++    )
++    result = _call(client)
++    assert result.validation_outcome == "PASSED"
++    assert result.retry_count == 1
++
++
++def test_max_retries_is_configurable_and_still_fails_closed():
++    client = FakeLlmClient([{"value": 1}, {"value": 2}])
++    result = client.call_structured(
++        operation=Operation.GUIDE_REQUEST_INTERPRETATION,
++        schema=SIMPLE_SCHEMA,
++        system_prompt="x",
++        input_data={},
++        max_retries=1,  # 2 attempts total
++    )
++    assert result.failed_closed
++    assert client.calls_made == 2
++
++
++def test_extra_field_rejected_by_strict_schema():
++    client = FakeLlmClient([{"value": "ok", "unexpected_field": "should not be here"}])
++    result = _call(client)
++    assert result.failed_closed
++
++
++# ---------------------------------------------------------------------------
++# Regime and model assignment (SAFE-900, D8)
++# ---------------------------------------------------------------------------
++
++
++def test_every_operation_has_exactly_one_regime():
++    for op in Operation:
++        assert regime_for(op) in {Regime.ASSIST, Regime.GUIDE}
++
++
++def test_assist_and_guide_operations_are_correctly_split():
++    assist_ops = {op for op in Operation if op.value.startswith("assist.")}
++    guide_ops = {op for op in Operation if op.value.startswith("guide.")}
++    assert all(regime_for(op) == Regime.ASSIST for op in assist_ops)
++    assert all(regime_for(op) == Regime.GUIDE for op in guide_ops)
++
++
++def test_document_structuring_uses_the_more_capable_model():
++    # D8: accuracy matters most for document structuring (feeds D16
++    # confirmation review, including verbatim dose text, SAFE-504).
++    assert model_for(Operation.ASSIST_DOCUMENT_STRUCTURING) == "claude-sonnet-5"
++
++
++def test_routine_generation_uses_the_faster_model():
++    assert model_for(Operation.GUIDE_ROUTINE_GENERATION) == "claude-haiku-4-5"
++
++
++# ---------------------------------------------------------------------------
++# PRIV-1652: audit log entries can never carry prompt/response/clinical content
++# ---------------------------------------------------------------------------
++
++
++def test_audit_log_entry_contains_no_prompt_or_output_content():
++    client = FakeLlmClient([{"value": "this looks like it could be clinical text"}])
++    result = _call(client, operation=Operation.ASSIST_DOCUMENT_STRUCTURING)
++    entry = to_audit_log_entry(result)
++
++    allowed_keys = {
++        "regime",
++        "operation",
++        "schemaVersion",
++        "model",
++        "latencyMs",
++        "validationOutcome",
++        "retryCount",
++        "errorClass",
++    }
++    assert set(entry.keys()) == allowed_keys
++    # The type itself cannot carry prompt/output content (no such field
++    # exists on the entry), but assert on values too as a second guard
++    # against a future refactor accidentally widening the projection.
++    serialized = str(entry.values())
++    assert "clinical text" not in serialized
++
++
++def test_audit_log_entry_on_failed_closed_result_still_has_no_output_field():
++    client = FakeLlmClient([{"value": 1}, {"value": 2}, {"value": 3}])
++    result = _call(client, operation=Operation.ASSIST_DOCUMENT_STRUCTURING)
++    entry = to_audit_log_entry(result)
++    assert "output" not in entry
++    assert entry["validationOutcome"] == "FAILED_CLOSED"
++
++
++# ---------------------------------------------------------------------------
++# Result invariants
++# ---------------------------------------------------------------------------
++
++
++def test_result_construction_rejects_passed_without_output():
++    from backend.ai.client.results import StructuredCallResult
++
++    with pytest.raises(ValueError):
++        StructuredCallResult(
++            operation=Operation.GUIDE_REQUEST_INTERPRETATION,
++            schema_name="x",
++            schema_version="1.0.0",
++            model="claude-haiku-4-5",
++            output=None,
++            validation_outcome="PASSED",
++            retry_count=0,
++            latency_ms=1.0,
++        )
++
++
++def test_result_construction_rejects_failed_closed_with_output():
++    from backend.ai.client.results import StructuredCallResult
++
++    with pytest.raises(ValueError):
++        StructuredCallResult(
++            operation=Operation.GUIDE_REQUEST_INTERPRETATION,
++            schema_name="x",
++            schema_version="1.0.0",
++            model="claude-haiku-4-5",
++            output={"value": "should not be here"},
++            validation_outcome="FAILED_CLOSED",
++            retry_count=2,
++            latency_ms=1.0,
++        )
++
++
++# ---------------------------------------------------------------------------
++# D25: no client runs without credentials, no hardcoded fallback
++# ---------------------------------------------------------------------------
++
++
++def test_anthropic_client_refuses_to_construct_without_api_key(monkeypatch):
++    from backend.ai.client.anthropic_client import AnthropicLlmClient
++
++    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
++    with pytest.raises(LlmNotConfiguredError):
++        AnthropicLlmClient()
++
++
++def test_anthropic_client_accepts_explicit_key_without_touching_env(monkeypatch):
++    from backend.ai.client.anthropic_client import AnthropicLlmClient
++
++    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
++    client = AnthropicLlmClient(api_key="test-only-not-a-real-key")
++    assert client._api_key == "test-only-not-a-real-key"
+-- 
+2.43.0
+
