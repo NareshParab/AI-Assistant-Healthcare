@@ -1,8 +1,8 @@
 # API Contract — AI Assistant Healthcare Backend
 
-**STATUS: FROZEN v1.2.0 — v1.0.0 approved by owner 2026-09-29; amended additively to v1.1.0 and then v1.2.0 by owner decisions 2026-09-29 (§10 decisions 14–24, §12).**
+**STATUS: FROZEN v1.3.0 — v1.0.0 approved by owner 2026-09-29; amended additively to v1.1.0, v1.2.0 and then v1.3.0 by owner decisions 2026-09-29 (§10 decisions 14–29, §12).**
 
-This is the frozen v1.2.0 API contract. Every shape in this document is a commitment both
+This is the frozen v1.3.0 API contract. Every shape in this document is a commitment both
 developers may build against. Any change past this point — an added, removed, or altered
 endpoint, field, error code, or status code — requires explicit owner approval and a
 version bump, per §12 (Change control). Additive-only changes are not exempt.
@@ -31,7 +31,7 @@ pointer, not a restatement with authority of its own.
 | Body format | JSON (`application/json`) for all requests and non-binary responses |
 | Timestamps | ISO-8601, UTC, e.g. `2026-09-29T10:57:18Z` |
 | Auth | Device-token, sent as a single HTTP header on every request except `/v1/health`: **`X-Device-Token`** (resolved 2026-09-29, §10 decision 2). No accounts, no login, no per-user credential (D22) |
-| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job (the `COMPLETED` and `EXTRACTION_FAILED` cases are defined in §3.3). `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
+| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job (the `COMPLETED` and `EXTRACTION_FAILED` cases are defined in §3.3). `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal (`CONFIRMED`, `EDITED_CONFIRMED` or `DISCARDED`) returns `409 Conflict`; an `UNCLEAR` proposal may be reviewed again (§3.4). `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
 | Pagination | None of the 17 endpoints below return an unbounded list; document/proposal lists are scoped to one device's own documents, which is expected to stay small. No pagination scheme is defined in this contract |
 
 ### 1.0 Companion credential: `X-Pairing-Code` (added v1.1.0)
@@ -458,7 +458,8 @@ The job-and-poll contract in full is in §7.
       "proposedType": "MEDICATION",
       "proposedFields": {
         "medicineName": "Tab. Ecosprin",
-        "doseText": "Tab. Ecosprin 75mg -- 1 tablet before breakfast"
+        "doseText": "Tab. Ecosprin 75mg -- 1 tablet before breakfast",
+        "timingText": "before breakfast"
       },
       "sourceReferenceId": "SYNTHETIC-ref-0001",
       "page": 0,
@@ -475,6 +476,11 @@ issue date, as a **verbatim string** copied from the document text (never parsed
 reformatted or normalized), or `null` if the document shows none. It is subject to the same
 verbatim-substring rule as the other proposal text (§5). It carries the date part of the
 provenance required by `SAFE-970` (source and date visible, `SC-04`).
+
+**v1.3.0 (§10 decision 27):** `documentDate` has **no source reference of its own**. It is
+verified only by the verbatim-substring rule against the document text, and the human
+confirms it against the rendered original page (§3.2, D16). A `documentDateSourceReferenceId`
+could be added later as an additive MINOR bump if the TV needs to highlight the date.
 
 **Zero valid proposals (v1.2.0, §10 decision 21)** is a `COMPLETED` job with `"proposals":
 []`, not `EXTRACTION_FAILED`:
@@ -590,6 +596,7 @@ now resolved above.)
     "instructionType": "MEDICATION",
     "medicineName": "Tab. Ecosprin",
     "doseTextAsTranscribed": "Tab. Ecosprin 75mg -- 1 tablet before breakfast",
+    "timingTextAsTranscribed": "before breakfast",
     "originalText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast",
     "sourceDocumentId": "SYNTHETIC-doc-0001",
     "sourceReferenceId": "SYNTHETIC-ref-0001",
@@ -615,6 +622,7 @@ original proposal (`originallyProposedFields`) and the verbatim source text
     "instructionType": "MEDICATION",
     "medicineName": "Tab. Ecosprin",
     "doseTextAsTranscribed": "Tab. Ecosprin 75mg -- 1 tablet before breakfast, with water",
+    "timingTextAsTranscribed": "before breakfast",
     "originallyProposedFields": {
       "doseText": "Tab. Ecosprin 75mg -- 1 tablet before breakfast"
     },
@@ -641,10 +649,42 @@ when the human changed a value — matching the confirmation-state model in
 additive: the document's own issue date as a verbatim string, or `null` if the document shows
 none (see §3.3 and §5). It is present in `confirmedInstruction` for every `instructionType`.
 
-**Reviewing an `UNCLEAR` proposal (v1.2.0, §10 decision 20):** a proposal whose `reviewState`
-is `UNCLEAR` may be confirmed or edited by the human through this endpoint (`confirm` or
-`edit`), exactly like a `PROPOSED` one. `UNCLEAR` means "needs a person", not "cannot be
-acted on".
+**`confirmedInstruction` field names (v1.3.0, §10 decision 25):** the fields are the
+proposal's fields for the same type (§5) plus `instructionType`, `originalText`,
+`sourceDocumentId`, `sourceReferenceId`, `documentDate` and `plainLanguage`. Following the
+existing `doseTextAsTranscribed` convention, the transcribed dose and scheduling text appear
+with an `AsTranscribed` suffix: `doseText` → `doseTextAsTranscribed`, `timingText` →
+`timingTextAsTranscribed`, `frequencyText` → `frequencyTextAsTranscribed`, `durationOrRepsText`
+→ `durationOrRepsTextAsTranscribed`. Every other field keeps its proposal name.
+```json
+{
+  "proposalId": "SYNTHETIC-prop-0003",
+  "reviewState": "CONFIRMED",
+  "editedByHuman": false,
+  "confirmedInstruction": {
+    "instructionType": "PRESCRIBED_ACTIVITY",
+    "activityText": "Gentle 10 minute walk",
+    "frequencyTextAsTranscribed": "morning",
+    "durationOrRepsTextAsTranscribed": "10 minute",
+    "originalText": "Exercise: Gentle 10 minute walk, morning, if not fatigued",
+    "sourceDocumentId": "SYNTHETIC-doc-0001",
+    "sourceReferenceId": "SYNTHETIC-ref-0003",
+    "documentDate": "12 Aug 2026",
+    "plainLanguage": {
+      "text": "Exercise: Gentle 10 minute walk, morning, if not fatigued",
+      "isVerbatimFallback": true
+    }
+  }
+}
+```
+
+**Reviewing an `UNCLEAR` proposal (v1.2.0, §10 decision 20; re-entry v1.3.0, §10 decision 28):**
+a proposal whose `reviewState` is `UNCLEAR` may be confirmed or edited by the human through
+this endpoint (`confirm` or `edit`), exactly like a `PROPOSED` one. `UNCLEAR` means "needs a
+person", not "cannot be acted on". This holds whether the proposal was flagged `UNCLEAR` by
+the server or became `UNCLEAR` through an `unclear` review action: it **may be reviewed
+again**. `409 ALREADY_REVIEWED` is returned **only** when the proposal is already
+`CONFIRMED`, `EDITED_CONFIRMED` or `DISCARDED`. No new error code is used.
 
 **Response `200 OK` (discard)**
 ```json
@@ -738,11 +778,11 @@ attempt is NOT exposed to the client, by design (D26)** — the client sees only
 detail is server-side/log-only.
 
 **A note on presets**: this endpoint's `PRESET` response shape assumes hand-authored 10/15/
-20-minute presets exist per plan §7.4. **As of `f9b7f38`, no preset content exists anywhere
-in the repository** (verified: no file under `shared/movement-catalog/` or elsewhere
-defines presets). This endpoint is therefore documented as **NOT YET IMPLEMENTED** — see
-§8. The preset-content gap itself is tracked as a known implementation dependency, not a
-contract question (§10 decision 13, §11).
+20-minute presets exist per plan §7.4. **As of commit `63d784e` they do:**
+`shared/movement-catalog/presets.json` holds three presets (10, 15 and 20 minutes, against
+`catalogVersion` `1.0.0`), each validated by the routine validator
+(`backend/tests/test_presets.py`). The endpoint itself is still documented as **NOT YET
+IMPLEMENTED** — see §8. The preset-content dependency is resolved (§10 decision 13, §11).
 
 **Status codes:** `200` ok (both origins). `401` `UNAUTHENTICATED`. `422`
 `VALIDATION_ERROR` (malformed request body itself, distinct from a GUIDE-generation
@@ -951,7 +991,7 @@ output.
 | `page` | integer | 0-indexed, matches the PDF page the span is on |
 | `confidence` | number | `0.0`–`1.0`, **uncalibrated** (resolved 2026-09-29, §10 decision 7). **Clients MUST drive behaviour from `reviewState` (`PROPOSED` vs `UNCLEAR`), never from this number.** It is not a certainty and must not be presented to the user as one (`SAFE-503`) — it exists for server-side/log-side signal only |
 | `reviewState` | string | `PROPOSED` or `UNCLEAR` — **only these two values exist server-side before a human acts.** `CONFIRMED`/`EDITED_CONFIRMED`/`DISCARDED` only exist after `POST /proposals/{id}/review` |
-| `documentDate` | string or `null` | Optional (v1.2.0). The document's own issue date as a verbatim string, or `null` if the document shows none (§3.3). Never parsed or normalized |
+| `documentDate` | string or `null` | Optional (v1.2.0). The document's own issue date as a verbatim string, or `null` if the document shows none (§3.3). Never parsed or normalized. Verified only by the verbatim-substring rule against the document text; it has no source reference of its own (§3.3, v1.3.0) |
 
 #### Proposal fields per `proposedType` (v1.2.0, §10 decision 15)
 
@@ -962,14 +1002,30 @@ string. A value the document does not state is omitted, never invented or defaul
 
 | `proposedType` | `proposedFields` |
 |---|---|
-| `MEDICATION` | `medicineName`, `doseText` |
-| `PRESCRIBED_ACTIVITY` | `activityText` |
+| `MEDICATION` | `medicineName`, `doseText`, `timingText` |
+| `PRESCRIBED_ACTIVITY` | `activityText`, `frequencyText`, `durationOrRepsText` |
 | `MEAL_INSTRUCTION` | `instructionText` |
 | `PRECAUTION` | `precautionText` |
 | `APPOINTMENT` | `what`, `dateOrInterval` |
 
+**v1.3.0 additions (§10 decision 25):** `timingText` (`MEDICATION`), and `frequencyText` and
+`durationOrRepsText` (`PRESCRIBED_ACTIVITY`) exist so the device can schedule a day
+(`PROJECT_MASTER_SPEC.md` §15.2). They are **transcription of the document's own words**, under
+exactly the same rules as every other field: each must pass the verbatim-substring check
+against the source text; a value that fails makes the proposal `UNCLEAR` with the
+server-copied source text in that field (below); and each is **omitted when the document does
+not state it**. All other types have no additions: meal scope stays inside `instructionText`,
+precaution applicability inside `precautionText`, and no derived tag, scope, `appliesTo`,
+`blocksMovementTags` or other classification is added.
+
+**Structured placement is not extracted.** Which time slot of the day a task takes is chosen
+by the human at review or by the device's own day engine, never by the AI. `timingText`,
+`frequencyText` and `durationOrRepsText` are the document's words, not a schedule.
+
 The `editedFields` patch of `POST /v1/proposals/{id}/review` (§3.4) may name only fields in
-this table for the proposal's own `proposedType`; anything else is `422 VALIDATION_ERROR`.
+this table for the proposal's own `proposedType`, **including the v1.3.0 additions**
+(`timingText` for `MEDICATION`; `frequencyText` and `durationOrRepsText` for
+`PRESCRIBED_ACTIVITY`); any other name is `422 VALIDATION_ERROR` (§10 decision 26).
 
 #### Verbatim rule, and how an `UNCLEAR` proposal looks (v1.2.0, §10 decision 19)
 
@@ -986,13 +1042,32 @@ shows the original page through the render endpoint (§3.2, D16).
   "proposedType": "MEDICATION",
   "proposedFields": {
     "medicineName": "Tab. Ecosprin",
-    "doseText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast"
+    "doseText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast",
+    "timingText": "before breakfast"
   },
   "sourceReferenceId": "SYNTHETIC-ref-0002",
   "page": 0,
   "confidence": 0.41,
   "reviewState": "UNCLEAR",
   "documentDate": null
+}
+```
+
+A `PRESCRIBED_ACTIVITY` proposal, for comparison:
+```json
+{
+  "proposalId": "SYNTHETIC-prop-0003",
+  "proposedType": "PRESCRIBED_ACTIVITY",
+  "proposedFields": {
+    "activityText": "Gentle 10 minute walk",
+    "frequencyText": "morning",
+    "durationOrRepsText": "10 minute"
+  },
+  "sourceReferenceId": "SYNTHETIC-ref-0003",
+  "page": 0,
+  "confidence": 0.9,
+  "reviewState": "PROPOSED",
+  "documentDate": "12 Aug 2026"
 }
 ```
 
@@ -1140,25 +1215,30 @@ Each entry: the decision, a one-line rationale, and the date.
 | 22 | *(v1.2.0)* Case of `X-Pairing-Code` | The server upper-cases it before lookup (§1.0). `X-Device-Token` is not case-folded | A phone keyboard may lowercase what the user types | 2026-09-29 |
 | 23 | *(v1.2.0)* Wording of the `UNAUTHENTICATED` error | Credential-neutral: "Missing or invalid credentials" (§2). No error code added or removed | The error now covers two credential types (§1.0), so "device token" was misleading | 2026-09-29 |
 | 24 | *(v1.2.0)* What the device keeps of a source reference | `documentId`, `sourceReferenceId`, `page` and `originalText`; it fetches the highlighted original via the render endpoint and never receives or stores coordinates (§6) | Matches the contract as written (no endpoint returns a bbox); keeps geometry server-side (D16) | 2026-09-29 |
+| 25 | *(v1.3.0)* Which extra fields let the device schedule a day? | Three optional **verbatim-text** fields: `MEDICATION` gains `timingText`; `PRESCRIBED_ACTIVITY` gains `frequencyText` and `durationOrRepsText`. Same rules as every other field (verbatim substring check; failure → `UNCLEAR` with server-copied source text; omitted if the document does not state it). No other type changes, and no derived tag, scope, `appliesTo`, `blocksMovementTags` or classification. Structured placement is chosen by the human at review or by the device engine, never extracted (§5). Confirmed names: `timingTextAsTranscribed`, `frequencyTextAsTranscribed`, `durationOrRepsTextAsTranscribed` (§3.4) | `PROJECT_MASTER_SPEC.md` §15.2 and plan §3.2 (`durationOrReps`, `frequency`) need this text to schedule a day; transcription, not classification (`SAFE-912`, `SAFE-972`) | 2026-09-29 |
+| 26 | *(v1.3.0)* May `editedFields` name the new fields? | Yes: `timingText` for `MEDICATION`; `frequencyText` and `durationOrRepsText` for `PRESCRIBED_ACTIVITY`. Any other name is still `422 VALIDATION_ERROR` (§5, §3.4) | Keeps the edit schema equal to the proposal schema | 2026-09-29 |
+| 27 | *(v1.3.0)* Does `documentDate` get its own source reference? | **Not for now.** It is verified only by the verbatim-substring rule against the document text, and the human confirms it on the rendered original page. A `documentDateSourceReferenceId` could be added later as a MINOR bump if the TV needs to highlight it (§3.3) | Smallest change that satisfies `SAFE-970`/`SC-04` today | 2026-09-29 |
+| 28 | *(v1.3.0)* Can an `UNCLEAR` proposal be reviewed again? | Yes, whether it was server-flagged or set by an `unclear` review action. `409 ALREADY_REVIEWED` only when the proposal is already `CONFIRMED`, `EDITED_CONFIRMED` or `DISCARDED`. Existing error codes only (§3.4, §1) | `UNCLEAR` means "needs a person" (`SAFE-503`); a person must be able to resolve it | 2026-09-29 |
+| 29 | *(v1.3.0)* Stale preset text in §3.5 and §11 | Corrected to the facts: three validated presets exist in `shared/movement-catalog/presets.json` (commit `63d784e`); the endpoint is still not implemented. Decision 13's own row is a historical record and is left as written | Text asserting that no presets exist was no longer true | 2026-09-29 |
 
-Decisions 14–24 were made after the v1.0.0 freeze, and are recorded in §12.
+Decisions 14–29 were made after the v1.0.0 freeze, and are recorded in §12.
 
 ---
 
 ## 11. Known implementation dependency (not a contract question)
 
 Per decision 13 above: `POST /v1/routines/generate`'s `PRESET` response shape (§3.5) is
-frozen, but **no preset content exists anywhere in the repository as of this freeze**
-(verified: no file under `shared/movement-catalog/` or elsewhere defines presets per plan
-§7.4). This is an implementation blocker for that endpoint's fallback path, tracked
-separately from this document. It does not block freezing this contract, because the
-*shape* the presets must conform to is already fully specified.
+frozen. **As of the v1.0.0 freeze no preset content existed; this has since been resolved.**
+Commit `63d784e` added `shared/movement-catalog/presets.json`: three presets (10, 15 and 20
+minutes, `catalogVersion` `1.0.0`), each validated by the routine validator
+(`backend/tests/test_presets.py`). The preset content is therefore no longer a blocker for
+that endpoint's fallback path; the endpoint itself remains unimplemented (§8).
 
 ---
 
 ## 12. Change control
 
-**This contract is FROZEN at v1.2.0 (v1.0.0 frozen 2026-09-29; amended additively to v1.1.0 and v1.2.0 2026-09-29).**
+**This contract is FROZEN at v1.3.0 (v1.0.0 frozen 2026-09-29; amended additively to v1.1.0, v1.2.0 and v1.3.0 2026-09-29).**
 
 From this point forward:
 
@@ -1182,6 +1262,7 @@ From this point forward:
 | v1.0.0 | 2026-09-29 | Initial freeze. 17 endpoints (16 from `ARCHITECTURE_MVP_PLAN.md` §4's table + `DELETE /v1/documents/{id}`, added per owner decision). All 13 pre-freeze open questions resolved per §10. Item 10 (extraction timeout) marked PROVISIONAL pending P5 latency measurements — a future change to that number alone still requires a version bump per the rule above |
 | v1.1.0 | 2026-09-29 | Additive, backward-compatible. `POST /v1/documents` additionally accepts an `X-Pairing-Code` header as an alternative to `X-Device-Token` (§1.0, §3.2, §10 decision 14). Reason: the companion (D21/D22) holds only a pairing code, so v1.0.0 gave it no way to authenticate an upload. No new endpoint (still 17), no new error code; existing `X-Device-Token` behaviour is unchanged. Also records that the upload response's `documentType` is `"unspecified"` until extraction classifies it |
 | v1.2.0 | 2026-09-29 | Additive, backward-compatible. Owner decisions 15–24 (§10): verbatim-text proposal fields per `proposedType` (§5); enumerated `processingState` (§3.2); optional `documentDate` on proposals and `confirmedInstruction` (§3.3, §3.4, §5); `POST extract` rules for `COMPLETED` and `EXTRACTION_FAILED` documents (§3.3); zero valid proposals is a `COMPLETED` job with `[]` (§3.3, §7); a failed-verbatim proposal is returned `UNCLEAR` with server-copied source text (§5); an `UNCLEAR` proposal may be confirmed or edited (§3.4); the server upper-cases `X-Pairing-Code` (§1.0); `UNAUTHENTICATED` wording made credential-neutral (§2); device-side source-reference storage stated (§6); §8 brought up to date. Reason: settle the questions raised by the extraction plan before extraction endpoints are built. No new endpoint (still 17), no error code added or removed |
+| v1.3.0 | 2026-09-29 | Additive, backward-compatible. Owner decisions 25–29 (§10): optional verbatim-text fields `timingText` (`MEDICATION`), `frequencyText` and `durationOrRepsText` (`PRESCRIBED_ACTIVITY`), accepted in `editedFields` and returned in `confirmedInstruction` with the `AsTranscribed` suffix (§3.4, §5); `documentDate` has no source reference of its own (§3.3, §5); an `UNCLEAR` proposal may be reviewed again and `409 ALREADY_REVIEWED` applies only to `CONFIRMED`, `EDITED_CONFIRMED` and `DISCARDED` (§3.4, §1); stale "no presets exist" text in §3.5 and §11 corrected. Reason: the device needs the document's own timing, frequency and duration words to schedule a day (`PROJECT_MASTER_SPEC.md` §15.2), and the review flow needed a clear re-entry rule. No new endpoint (still 17), no error code added or removed |
 
-No further changes are recorded in this document beyond v1.2.0. The next entry in this
+No further changes are recorded in this document beyond v1.3.0. The next entry in this
 table is the first thing to add when a change is approved.
