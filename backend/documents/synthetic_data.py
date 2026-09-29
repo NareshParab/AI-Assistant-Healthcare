@@ -187,6 +187,42 @@ def generate_unicode_line_document() -> bytes:
     return pdf_bytes
 
 
+# Extraction T3 fixture: lines that sit near each other but are NOT wrapped
+# continuations, plus a genuine wrapped pair. Body text (11pt) dominates so the
+# 14pt lowercase line is detected as a heading.
+CONTINUATION_EDGE_LINES = {
+    "uppercase_next": "Medication: Tab. Alpha 5mg -- 1 tablet",
+    "uppercase_follower": "Exercise: Gentle walk",
+    "lower_heading_parent": "Tab. Beta 10mg twice daily",
+    "lower_heading": "extra notes",
+    "far_parent": "Tab. Gamma 1mg once daily",
+    "far_lowercase": "unrelated far away line of ordinary text",
+    "wrapped_parent": "Medication: Tab. Delta 20mg -- 1 tablet",
+    "wrapped_child": "at bedtime with water",
+}
+
+
+def generate_continuation_edge_document() -> bytes:
+    L = CONTINUATION_EDGE_LINES
+    return _build_pdf(
+        [
+            [
+                (L["uppercase_next"], 100, 11),
+                (L["uppercase_follower"], 118, 11),
+                (L["lower_heading_parent"], 160, 11),
+                (L["lower_heading"], 178, 14),
+                (L["far_parent"], 230, 11),
+                (L["far_lowercase"], 300, 11),
+                (L["wrapped_parent"], 360, 11),
+                (L["wrapped_child"], 376, 11),
+                ("Filler body line one to keep the body size dominant", 500, 11),
+                ("Filler body line two to keep the body size dominant", 520, 11),
+                ("Filler body line three to keep the body size dominant", 540, 11),
+            ]
+        ]
+    )
+
+
 if __name__ == "__main__":
     import pathlib
 
