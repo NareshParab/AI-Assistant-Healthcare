@@ -204,3 +204,54 @@ def test_pairing_code_rejected_on_other_authenticated_endpoint(client, temp_db_p
     )
 
     _assert_unauthenticated(r)
+
+
+# --- case normalization (contract v1.2.0, section 1.0) ---------------------------
+
+
+def test_lowercase_pairing_code_is_accepted(client, temp_db_path):
+    device_id = _device_id_for(temp_db_path, _register(client))
+    code = _make_code(temp_db_path, device_id)
+    assert code == code.upper()  # issued codes are upper-case
+
+    r = _upload(client, {"X-Pairing-Code": code.lower()})
+
+    assert r.status_code == 201
+    assert _doc_device(temp_db_path, r.json()["documentId"]) == device_id
+
+
+def test_mixed_case_pairing_code_is_accepted(client, temp_db_path):
+    device_id = _device_id_for(temp_db_path, _register(client))
+    code = _make_code(temp_db_path, device_id)
+    mixed = "".join(c.lower() if i % 2 else c for i, c in enumerate(code))
+    assert mixed not in (code, code.lower())  # genuinely mixed
+
+    assert _upload(client, {"X-Pairing-Code": mixed}).status_code == 201
+
+
+def test_unknown_pairing_code_still_fails_in_any_case(client):
+    for presented in ("ZZZZZZ", "zzzzzz", "ZzZzZz"):
+        _assert_unauthenticated(_upload(client, {"X-Pairing-Code": presented}))
+
+
+def test_expired_pairing_code_still_fails_when_typed_in_lowercase(client, temp_db_path, clock):
+    device_id = _device_id_for(temp_db_path, _register(client))
+    code = _make_code(temp_db_path, device_id)
+    clock["now"] = T0 + timedelta(minutes=15)
+
+    _assert_unauthenticated(_upload(client, {"X-Pairing-Code": code.lower()}))
+
+
+def test_device_token_is_not_case_folded(client):
+    token = _register(client)
+    swapped = token.swapcase()
+    assert swapped != token
+
+    _assert_unauthenticated(_upload(client, {"X-Device-Token": swapped}))
+
+
+def test_unauthenticated_message_is_credential_neutral(client):
+    r = _upload(client, {})
+    assert r.status_code == 401
+    assert r.json()["error"]["message"] == "Missing or invalid credentials."
+    assert "device token" not in r.json()["error"]["message"].lower()

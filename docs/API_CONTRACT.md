@@ -1,8 +1,8 @@
 # API Contract — AI Assistant Healthcare Backend
 
-**STATUS: FROZEN v1.1.0 — v1.0.0 approved by owner 2026-09-29; amended additively to v1.1.0 by owner decision 2026-09-29 (§10 decision 14, §12).**
+**STATUS: FROZEN v1.2.0 — v1.0.0 approved by owner 2026-09-29; amended additively to v1.1.0 and then v1.2.0 by owner decisions 2026-09-29 (§10 decisions 14–24, §12).**
 
-This is the frozen v1.1.0 API contract. Every shape in this document is a commitment both
+This is the frozen v1.2.0 API contract. Every shape in this document is a commitment both
 developers may build against. Any change past this point — an added, removed, or altered
 endpoint, field, error code, or status code — requires explicit owner approval and a
 version bump, per §12 (Change control). Additive-only changes are not exempt.
@@ -31,7 +31,7 @@ pointer, not a restatement with authority of its own.
 | Body format | JSON (`application/json`) for all requests and non-binary responses |
 | Timestamps | ISO-8601, UTC, e.g. `2026-09-29T10:57:18Z` |
 | Auth | Device-token, sent as a single HTTP header on every request except `/v1/health`: **`X-Device-Token`** (resolved 2026-09-29, §10 decision 2). No accounts, no login, no per-user credential (D22) |
-| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job. `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
+| Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job (the `COMPLETED` and `EXTRACTION_FAILED` cases are defined in §3.3). `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
 | Pagination | None of the 17 endpoints below return an unbounded list; document/proposal lists are scoped to one device's own documents, which is expected to stay small. No pagination scheme is defined in this contract |
 
 ### 1.0 Companion credential: `X-Pairing-Code` (added v1.1.0)
@@ -60,7 +60,9 @@ Rules:
 - A pairing code is **reusable until its expiry**: it is not consumed by use, and every
   upload within its validity window is accepted. The long-lived demo code (§3.1, D22)
   follows the same header rule and the same reuse rule.
-- Codes are matched exactly as issued (uppercase). The server never logs a device token or
+- **Case:** the server upper-cases `X-Pairing-Code` before lookup, because a phone keyboard
+  may lowercase what the user types. A lowercase or mixed-case entry of a valid code is
+  accepted. `X-Device-Token` is **not** case-folded. The server never logs a device token or
   pairing code (D26).
 
 ### 1.1 What the client never holds
@@ -98,7 +100,7 @@ this point require a version bump per §12 — this list is not casually extensi
 
 | Code | HTTP status | retryable | Meaning |
 |---|---|---|---|
-| `UNAUTHENTICATED` | 401 | false | Missing or invalid device token |
+| `UNAUTHENTICATED` | 401 | false | Missing or invalid credentials |
 | `DOCUMENT_NOT_FOUND` | 404 | false | No document with that id for this device token |
 | `PROPOSAL_NOT_FOUND` | 404 | false | No proposal with that id |
 | `JOB_NOT_FOUND` | 404 | false | No extraction job with that id |
@@ -224,6 +226,19 @@ credential.
 **Note on `documentType`:** the upload response returns `"documentType": "unspecified"`
 until extraction classifies the document. The `"prescription"` value in the example above
 is illustrative of a classified document.
+
+**`processingState` (v1.2.0, §10 decision 16)** is an enumerated set, and no other value is
+ever returned:
+
+| Value | Meaning |
+|---|---|
+| `RECEIVED` | Uploaded; no extraction job has been started |
+| `EXTRACTING` | An extraction job for the document is `PENDING` or `RUNNING` |
+| `PROPOSALS_READY` | The document's latest extraction job is `COMPLETED` (its `proposals` may be an empty array, §3.3) |
+| `EXTRACTION_FAILED` | The document's latest extraction job is `EXTRACTION_FAILED` |
+
+Review status is **not** a `processingState` value. It is derived by the client from the
+`reviewState` of the document's proposals (§5).
 
 **Status codes:** `201` created. `401` `UNAUTHENTICATED` (missing credentials, or an
 invalid device token, or an invalid, unknown or expired pairing code). `413`
@@ -400,7 +415,10 @@ X-Device-Token: SYNTHETIC-8f14e45f-ceea-467e-bd97-11example0001
 
 Calling this again for the same document while a job is already `PENDING`/`RUNNING`
 returns the **existing** job with `200 OK` instead of creating a second one (idempotency,
-§1).
+§1). **v1.2.0 (§10 decision 17):** the same applies when the document's latest job is
+`COMPLETED` — that existing job is returned with `200 OK` and no new job is created. When
+the latest job is `EXTRACTION_FAILED`, the next `POST` creates a **new** job (`202
+Accepted`), which is how a retry is made.
 
 **Status codes:** `202` accepted (new job). `200` ok (existing job returned). `401`
 `UNAUTHENTICATED`. `404` `DOCUMENT_NOT_FOUND`.
@@ -445,11 +463,33 @@ The job-and-poll contract in full is in §7.
       "sourceReferenceId": "SYNTHETIC-ref-0001",
       "page": 0,
       "confidence": 0.94,
-      "reviewState": "PROPOSED"
+      "reviewState": "PROPOSED",
+      "documentDate": "12 Aug 2026"
     }
   ]
 }
 ```
+
+**`documentDate` (v1.2.0, §10 decision 18)** is optional and additive: the document's own
+issue date, as a **verbatim string** copied from the document text (never parsed,
+reformatted or normalized), or `null` if the document shows none. It is subject to the same
+verbatim-substring rule as the other proposal text (§5). It carries the date part of the
+provenance required by `SAFE-970` (source and date visible, `SC-04`).
+
+**Zero valid proposals (v1.2.0, §10 decision 21)** is a `COMPLETED` job with `"proposals":
+[]`, not `EXTRACTION_FAILED`:
+```json
+{
+  "jobId": "SYNTHETIC-job-0002",
+  "documentId": "SYNTHETIC-doc-0002",
+  "status": "COMPLETED",
+  "proposals": []
+}
+```
+
+**A proposal that failed the server's verbatim check (v1.2.0, §10 decision 19)** appears in
+`proposals` with the existing shape and `"reviewState": "UNCLEAR"`; see §5 for how its
+fields look.
 
 **Response `200 OK` — failed (D24)**
 ```json
@@ -476,7 +516,9 @@ created; failure is a status value, not an HTTP error). `401` `UNAUTHENTICATED`.
 | Tier (D20) | 2 |
 | Fallback (D24) | None specified beyond the job's own `EXTRACTION_FAILED` state |
 
-**Response `200 OK`** — same `proposals` array shape as the completed-job response above.
+**Response `200 OK`** — same `proposals` array shape as the completed-job response above,
+including the optional `documentDate` on each proposal and `[]` for a completed extraction
+with zero valid proposals.
 
 **Status codes:** `200` ok. `401` `UNAUTHENTICATED`. `404` `DOCUMENT_NOT_FOUND`.
 
@@ -551,6 +593,7 @@ now resolved above.)
     "originalText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast",
     "sourceDocumentId": "SYNTHETIC-doc-0001",
     "sourceReferenceId": "SYNTHETIC-ref-0001",
+    "documentDate": "12 Aug 2026",
     "plainLanguage": {
       "text": "Tab. Ecosprin 75mg -- 1 tablet before breakfast",
       "isVerbatimFallback": false
@@ -578,6 +621,7 @@ original proposal (`originallyProposedFields`) and the verbatim source text
     "originalText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast",
     "sourceDocumentId": "SYNTHETIC-doc-0001",
     "sourceReferenceId": "SYNTHETIC-ref-0001",
+    "documentDate": "12 Aug 2026",
     "plainLanguage": {
       "text": "Tab. Ecosprin 75mg -- 1 tablet before breakfast, with water",
       "isVerbatimFallback": false
@@ -592,6 +636,15 @@ simplification) — the client can distinguish the two cases without inspecting 
 itself. `reviewState` is `CONFIRMED` for an unedited confirmation and `EDITED_CONFIRMED`
 when the human changed a value — matching the confirmation-state model in
 `ARCHITECTURE_MVP_PLAN.md` §19.1.
+
+**`documentDate` in `confirmedInstruction` (v1.2.0, §10 decision 18)** is optional and
+additive: the document's own issue date as a verbatim string, or `null` if the document shows
+none (see §3.3 and §5). It is present in `confirmedInstruction` for every `instructionType`.
+
+**Reviewing an `UNCLEAR` proposal (v1.2.0, §10 decision 20):** a proposal whose `reviewState`
+is `UNCLEAR` may be confirmed or edited by the human through this endpoint (`confirm` or
+`edit`), exactly like a `PROPOSED` one. `UNCLEAR` means "needs a person", not "cannot be
+acted on".
 
 **Response `200 OK` (discard)**
 ```json
@@ -893,11 +946,55 @@ output.
 |---|---|---|
 | `proposalId` | string | Server-assigned identifier |
 | `proposedType` | string | e.g. `MEDICATION`, `PRESCRIBED_ACTIVITY`, `MEAL_INSTRUCTION`, `PRECAUTION`, `APPOINTMENT` (per `CareInstruction` subtypes) |
-| `proposedFields` | object | Type-specific fields, e.g. `medicineName`, `doseText` for `MEDICATION`. **Dose text is always verbatim, never normalized or recomputed (SAFE-504)** |
+| `proposedFields` | object | Type-specific **verbatim-text** fields, exactly those listed per type below (v1.2.0). **Dose text is always verbatim, never normalized or recomputed (SAFE-504)** |
 | `sourceReferenceId` | string | Identifies the exact page + bounding box this proposal came from; pass this to `pages/{n}/render?highlight=` |
 | `page` | integer | 0-indexed, matches the PDF page the span is on |
 | `confidence` | number | `0.0`–`1.0`, **uncalibrated** (resolved 2026-09-29, §10 decision 7). **Clients MUST drive behaviour from `reviewState` (`PROPOSED` vs `UNCLEAR`), never from this number.** It is not a certainty and must not be presented to the user as one (`SAFE-503`) — it exists for server-side/log-side signal only |
 | `reviewState` | string | `PROPOSED` or `UNCLEAR` — **only these two values exist server-side before a human acts.** `CONFIRMED`/`EDITED_CONFIRMED`/`DISCARDED` only exist after `POST /proposals/{id}/review` |
+| `documentDate` | string or `null` | Optional (v1.2.0). The document's own issue date as a verbatim string, or `null` if the document shows none (§3.3). Never parsed or normalized |
+
+#### Proposal fields per `proposedType` (v1.2.0, §10 decision 15)
+
+Proposal fields are **verbatim text copied from the document, and nothing else**: no derived
+tag, scope, category or classification, and no field outside this table. Every value is a
+string. A value the document does not state is omitted, never invented or defaulted
+(`SAFE-912`).
+
+| `proposedType` | `proposedFields` |
+|---|---|
+| `MEDICATION` | `medicineName`, `doseText` |
+| `PRESCRIBED_ACTIVITY` | `activityText` |
+| `MEAL_INSTRUCTION` | `instructionText` |
+| `PRECAUTION` | `precautionText` |
+| `APPOINTMENT` | `what`, `dateOrInterval` |
+
+The `editedFields` patch of `POST /v1/proposals/{id}/review` (§3.4) may name only fields in
+this table for the proposal's own `proposedType`; anything else is `422 VALIDATION_ERROR`.
+
+#### Verbatim rule, and how an `UNCLEAR` proposal looks (v1.2.0, §10 decision 19)
+
+The server checks every proposed text value, and `documentDate`, against the document's own
+text. A proposal that **fails** that check is returned with the existing shape and
+`"reviewState": "UNCLEAR"`. For each field that failed, the server puts **the verbatim source
+text it copied itself** from the region the proposal's `sourceReferenceId` points to, and
+**never the model's value**. No field distinguishes such a proposal from any other `UNCLEAR`
+one, and none is needed: the client drives behaviour from `reviewState` (decision 7) and
+shows the original page through the render endpoint (§3.2, D16).
+```json
+{
+  "proposalId": "SYNTHETIC-prop-0002",
+  "proposedType": "MEDICATION",
+  "proposedFields": {
+    "medicineName": "Tab. Ecosprin",
+    "doseText": "Medication: Tab. Ecosprin 75mg -- 1 tablet before breakfast"
+  },
+  "sourceReferenceId": "SYNTHETIC-ref-0002",
+  "page": 0,
+  "confidence": 0.41,
+  "reviewState": "UNCLEAR",
+  "documentDate": null
+}
+```
 
 ### Evidence image contract (`GET /v1/documents/{id}/pages/{n}/render`)
 
@@ -920,6 +1017,12 @@ instruction to its evidence. **Format resolved 2026-09-29 (§10 decision 8): ser
 UUID v4**, e.g. `f47ac10b-58cc-4372-a567-0e02b2c3d479`. The `SYNTHETIC-ref-NNNN` strings
 used in this document's examples are placeholders for readability, not the real format.
 
+**On the device (v1.2.0, §10 decision 24):** for a confirmed instruction the client stores
+`documentId` (the `sourceDocumentId`), `sourceReferenceId`, `page` and `originalText`. It
+retrieves the highlighted original through `GET /v1/documents/{id}/pages/{n}/render` (§3.2).
+**The client never receives or stores coordinates:** no endpoint in this contract returns a
+bounding box.
+
 ---
 
 ## 7. Job-and-poll contract (D9)
@@ -931,7 +1034,7 @@ Applies to `POST /v1/documents/{id}/extract` + `GET /v1/extraction-jobs/{id}` on
 |---|---|---|
 | `PENDING` | Job created, not yet started | no |
 | `RUNNING` | Extraction in progress | no |
-| `COMPLETED` | Proposals available, `proposals` populated | **yes** |
+| `COMPLETED` | Proposals available, `proposals` populated (an empty array `[]` when zero valid proposals were found, §3.3) | **yes** |
 | `EXTRACTION_FAILED` | D24 fallback fired; `proposals: null`, never partial | **yes** |
 
 **Poll interval: 2 seconds** (resolved 2026-09-29, §10 decision 9) — matches the "honest,
@@ -950,8 +1053,9 @@ The server itself does not time out a job — it either reaches `COMPLETED` or
 
 ## 8. Implemented vs. Specified
 
-Verified by reading `backend/api/main.py` directly and by importing the FastAPI `app`
-object and enumerating `app.routes` offline (no server started):
+Updated for v1.2.0. Verified against `main` at `e700faf` (plus the v1.2.0 commit) by reading
+`backend/api/main.py` and by importing the FastAPI `app` object and enumerating `app.routes`
+offline (no server started):
 
 ```
 ['GET', 'HEAD'] /openapi.json          (FastAPI auto-generated, not part of this contract)
@@ -961,19 +1065,28 @@ object and enumerating `app.routes` offline (no server started):
 ['GET']         /v1/health
 ['GET']         /v1/poc/p4/evidence
 ['GET']         /v1/poc/p4/fields
+['POST']        /v1/devices/register
+['POST']        /v1/devices/pairing-code
+['POST']        /v1/documents
 ```
 
 | Contract endpoint | Implementation status |
 |---|---|
-| `GET /v1/health` | **Matches.** `backend/api/main.py:60-62` returns exactly `{"status": "ok"}` |
-| `GET /v1/documents/{id}/pages/{n}/render` | **NOT YET IMPLEMENTED** as this exact route. A functionally-related POC route exists at `GET /v1/poc/p4/evidence?field=<id>` (`main.py:65-93`), which locates one of five hardcoded field ids in one bundled demo document and returns a cropped, highlighted PNG. It proves the *mechanism* this contract's endpoint depends on (backed by the same `pdf_evidence.py` module) but takes a different, non-contract-shaped parameter (`field`, not `id`/`n`/`highlight`) and has no document/page/sourceReferenceId model behind it |
-| `DELETE /v1/documents/{id}` | **NOT YET IMPLEMENTED.** Added to this contract at freeze time (§10 decision 1); no route exists yet |
-| All other 14 endpoints (devices, remaining documents CRUD, extraction, review, routines, catalog, assist, summary, requests) | **NOT YET IMPLEMENTED.** No route, no handler, no request/response model exists for any of them in `backend/api/main.py` as of `f9b7f38` |
-| `GET /v1/poc/p4/fields` | **Not part of this contract.** POC-only, scoped under `/v1/poc/`, explicitly excluded from the frozen API surface by its own namespace |
+| `GET /v1/health` | **Implemented.** `backend/api/main.py` returns exactly `{"status": "ok"}` |
+| `POST /v1/devices/register` | **Implemented** per §3.1 |
+| `POST /v1/devices/pairing-code` | **Implemented** per §3.1 |
+| `POST /v1/documents` | **Implemented** per §3.2, including the `X-Pairing-Code` alternative credential (§1.0) and the `"unspecified"` `documentType` |
+| `GET /v1/documents/{id}/pages/{n}/render` | **NOT YET IMPLEMENTED** as this exact route. A functionally-related POC route exists at `GET /v1/poc/p4/evidence?field=<id>`, which locates one of five hardcoded field ids in one bundled demo document and returns a cropped, highlighted PNG. It proves the *mechanism* this endpoint depends on (the same `pdf_evidence.py` module) but takes a different, non-contract-shaped parameter and has no document/page/`sourceReferenceId` model behind it |
+| `GET /v1/documents`, `GET /v1/documents/{id}`, `DELETE /v1/documents/{id}` | **NOT YET IMPLEMENTED.** No route exists |
+| `POST /v1/documents/{id}/extract`, `GET /v1/extraction-jobs/{id}`, `GET /v1/documents/{id}/proposals` | **NOT YET IMPLEMENTED.** No route exists. Internal building blocks (PDF span extraction and the extraction storage layer) exist in the backend, but nothing is reachable over HTTP |
+| `POST /v1/proposals/{id}/review` | **NOT YET IMPLEMENTED.** No route exists |
+| `POST /v1/routines/generate`, `GET /v1/catalog`, `POST /v1/assist/plain-language`, `POST /v1/summary/interpretation`, `POST /v1/requests/interpret` | **NOT YET IMPLEMENTED.** No route exists |
+| `GET /v1/poc/p4/evidence`, `GET /v1/poc/p4/fields` | **Not part of this contract.** POC-only, scoped under `/v1/poc/`, explicitly excluded from the frozen API surface by their own namespace |
 
-**Summary: 1 of 17 contract endpoints is implemented and matches exactly (`/v1/health`).
-16 of 17 are not yet implemented.** The Fire TV client should build against this document
-as a set of stubs, not against the live server, for all but `/v1/health`.
+**Summary: 4 of 17 contract endpoints are implemented (`/v1/health`,
+`/v1/devices/register`, `/v1/devices/pairing-code`, `/v1/documents`). 13 of 17 are not yet
+implemented.** The Fire TV client should build against this document as a set of stubs, not
+against the live server, for all but those four.
 
 ---
 
@@ -1017,8 +1130,18 @@ Each entry: the decision, a one-line rationale, and the date.
 | 12 | Request body fields for `POST /v1/devices/register` and `POST /v1/devices/pairing-code` | **Empty body** for both | No real need identified for client metadata at registration/pairing time in this MVP | 2026-09-29 |
 | 13 | Presets for `routines/generate`'s `PRESET` origin (plan §7.4) — none exist in the repo | **Not part of this contract change.** The `PRESET` fallback path's shape is frozen (§3.5); the *content* it depends on is a **known implementation dependency**, not a contract question | Presets are catalog authoring work (same process as D17), independent of what the API shape looks like | 2026-09-29 |
 | 14 | *(post-freeze, v1.1.0)* How does the companion, which holds no device token, authenticate `POST /v1/documents`? | **Option A:** `POST /v1/documents` accepts **either** `X-Device-Token` **or** a new `X-Pairing-Code` header. No new endpoint, no new token type, no redemption endpoint. Device token wins if both are sent; the pairing code grants upload-to-that-device only (§1.0) | The companion (D21/D22) has only a pairing code; this closes that gap with the smallest additive change and leaves every other endpoint's auth untouched | 2026-09-29 |
+| 15 | *(v1.2.0)* What fields does a proposal carry per `proposedType`? | **Verbatim-text fields only** — no derived tag, scope or classification. `MEDICATION` → `medicineName` + `doseText`; `PRESCRIBED_ACTIVITY` → `activityText`; `MEAL_INSTRUCTION` → `instructionText`; `PRECAUTION` → `precautionText`; `APPOINTMENT` → `what` + `dateOrInterval`. The proposedType names are the contract's existing ones, unchanged (§5) | Extraction transcribes, it never classifies (`SAFE-912`, `SAFE-972`); this also makes the `editedFields` schema (§3.4) concrete | 2026-09-29 |
+| 16 | *(v1.2.0)* `processingState` values | An enumerated set: `RECEIVED`, `EXTRACTING`, `PROPOSALS_READY`, `EXTRACTION_FAILED`. Review status is derived from the proposals' `reviewState`, not a state value (§3.2) | Gives client and server one closed set to build against | 2026-09-29 |
+| 17 | *(v1.2.0)* `POST extract` on a document that already has a finished job | Latest job `COMPLETED` → that existing job is returned (200). Latest job `EXTRACTION_FAILED` → a new job is created on the next `POST` (§3.3) | Extends the existing idempotency rule (§1) to finished jobs; retry is by re-`POST` (D24) | 2026-09-29 |
+| 18 | *(v1.2.0)* Where does the document's issue date appear? | An optional `documentDate` on each proposal and on `confirmedInstruction`: the document's own issue date as a **verbatim string**, or `null` if none is shown. No parsing or normalization (§3.3, §5) | `SAFE-970` (provenance date) and `SC-04` (source and date visible) | 2026-09-29 |
+| 19 | *(v1.2.0)* What does a proposal that fails the server's verbatim check look like? | It is returned as `UNCLEAR`, in the existing shape, and each failed field carries the verbatim source text the server copied, never the model's value. No field exposes verification internals (§5) | Keeps a non-verbatim value (`SAFE-504`) from ever reaching the TV, without widening the response | 2026-09-29 |
+| 20 | *(v1.2.0)* May an `UNCLEAR` proposal be confirmed or edited? | Yes, by the human via `POST /v1/proposals/{id}/review` (§3.4) | `UNCLEAR` means "needs a person" (`SAFE-503`); the person must be able to resolve it | 2026-09-29 |
+| 21 | *(v1.2.0)* Extraction that finds zero valid proposals | A `COMPLETED` job with `"proposals": []`, not `EXTRACTION_FAILED` (§3.3, §7) | An honest empty result is not a failure | 2026-09-29 |
+| 22 | *(v1.2.0)* Case of `X-Pairing-Code` | The server upper-cases it before lookup (§1.0). `X-Device-Token` is not case-folded | A phone keyboard may lowercase what the user types | 2026-09-29 |
+| 23 | *(v1.2.0)* Wording of the `UNAUTHENTICATED` error | Credential-neutral: "Missing or invalid credentials" (§2). No error code added or removed | The error now covers two credential types (§1.0), so "device token" was misleading | 2026-09-29 |
+| 24 | *(v1.2.0)* What the device keeps of a source reference | `documentId`, `sourceReferenceId`, `page` and `originalText`; it fetches the highlighted original via the render endpoint and never receives or stores coordinates (§6) | Matches the contract as written (no endpoint returns a bbox); keeps geometry server-side (D16) | 2026-09-29 |
 
-Decision 14 was made after the v1.0.0 freeze, and is recorded in §12.
+Decisions 14–24 were made after the v1.0.0 freeze, and are recorded in §12.
 
 ---
 
@@ -1035,7 +1158,7 @@ separately from this document. It does not block freezing this contract, because
 
 ## 12. Change control
 
-**This contract is FROZEN at v1.1.0 (v1.0.0 frozen 2026-09-29; amended additively 2026-09-29).**
+**This contract is FROZEN at v1.2.0 (v1.0.0 frozen 2026-09-29; amended additively to v1.1.0 and v1.2.0 2026-09-29).**
 
 From this point forward:
 
@@ -1057,8 +1180,8 @@ From this point forward:
 | Version | Date | Change |
 |---|---|---|
 | v1.0.0 | 2026-09-29 | Initial freeze. 17 endpoints (16 from `ARCHITECTURE_MVP_PLAN.md` §4's table + `DELETE /v1/documents/{id}`, added per owner decision). All 13 pre-freeze open questions resolved per §10. Item 10 (extraction timeout) marked PROVISIONAL pending P5 latency measurements — a future change to that number alone still requires a version bump per the rule above |
-
 | v1.1.0 | 2026-09-29 | Additive, backward-compatible. `POST /v1/documents` additionally accepts an `X-Pairing-Code` header as an alternative to `X-Device-Token` (§1.0, §3.2, §10 decision 14). Reason: the companion (D21/D22) holds only a pairing code, so v1.0.0 gave it no way to authenticate an upload. No new endpoint (still 17), no new error code; existing `X-Device-Token` behaviour is unchanged. Also records that the upload response's `documentType` is `"unspecified"` until extraction classifies it |
+| v1.2.0 | 2026-09-29 | Additive, backward-compatible. Owner decisions 15–24 (§10): verbatim-text proposal fields per `proposedType` (§5); enumerated `processingState` (§3.2); optional `documentDate` on proposals and `confirmedInstruction` (§3.3, §3.4, §5); `POST extract` rules for `COMPLETED` and `EXTRACTION_FAILED` documents (§3.3); zero valid proposals is a `COMPLETED` job with `[]` (§3.3, §7); a failed-verbatim proposal is returned `UNCLEAR` with server-copied source text (§5); an `UNCLEAR` proposal may be confirmed or edited (§3.4); the server upper-cases `X-Pairing-Code` (§1.0); `UNAUTHENTICATED` wording made credential-neutral (§2); device-side source-reference storage stated (§6); §8 brought up to date. Reason: settle the questions raised by the extraction plan before extraction endpoints are built. No new endpoint (still 17), no error code added or removed |
 
-No further changes are recorded in this document beyond v1.1.0. The next entry in this
+No further changes are recorded in this document beyond v1.2.0. The next entry in this
 table is the first thing to add when a change is approved.

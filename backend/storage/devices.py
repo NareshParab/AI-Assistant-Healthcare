@@ -147,9 +147,12 @@ def resolve_pairing_code_device(
     if not raw_code:
         return None
     now = now or _utc_now()
+    # Contract 1.0 (v1.2.0): case-insensitive. Issued codes are upper-case; a
+    # phone keyboard may lowercase what the user types. Normalizing here, the
+    # single place every pairing-code lookup goes through, covers all callers.
     row = conn.execute(
         "SELECT device_id, expires_at FROM pairing_codes WHERE code_hash = ?",
-        (_hash(raw_code),),
+        (_hash(raw_code.upper()),),
     ).fetchone()
     if row is None:
         return None

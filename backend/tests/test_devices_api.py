@@ -105,7 +105,7 @@ def test_pairing_code_missing_token_gives_contract_error_envelope(client):
     assert r.json() == {
         "error": {
             "code": "UNAUTHENTICATED",
-            "message": "Missing or invalid device token.",
+            "message": "Missing or invalid credentials.",
             "retryable": False,
         }
     }

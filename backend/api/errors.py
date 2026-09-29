@@ -37,7 +37,7 @@ class ErrorSpec:
 # The full v1.0.0 error code list, contract section 2. Frozen: do not add,
 # remove, or alter an entry without an owner-approved contract version bump.
 ERROR_REGISTRY: dict[str, ErrorSpec] = {
-    "UNAUTHENTICATED": ErrorSpec(401, False, "Missing or invalid device token."),
+    "UNAUTHENTICATED": ErrorSpec(401, False, "Missing or invalid credentials."),
     "DOCUMENT_NOT_FOUND": ErrorSpec(404, False, "That document could not be found."),
     "PROPOSAL_NOT_FOUND": ErrorSpec(404, False, "That proposal could not be found."),
     "JOB_NOT_FOUND": ErrorSpec(404, False, "That extraction job could not be found."),
