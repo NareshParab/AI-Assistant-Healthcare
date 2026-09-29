@@ -41,11 +41,14 @@ htmlcov/
 # ── Generated evidence-image test output (not source) ──
 backend/tests/output/
 
-# ── Backend runtime artifacts (D6 storage; no code implements this yet —
-# standing safety net, merged from the P4 transfer package's reviewed
-# .gitignore, same philosophy as the secrets section above) ──
+# ── Backend runtime artifacts (D6 storage). The devices/pairing-code
+# SQLite DB (backend/storage/db.py) now actually exists, at
+# backend/data/app.db by default -- the original backend/*.db pattern
+# below does not match one directory deeper, so backend/data/ is added
+# explicitly (git glob "*" does not cross "/"). ──
 backend/*.db
 backend/*.sqlite3
+backend/data/
 backend/blobs/
 
 # ── IDE / editor ──
