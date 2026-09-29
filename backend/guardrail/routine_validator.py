@@ -31,7 +31,15 @@ OPENING_CATEGORIES = {"WARMUP"}
 # exertion segment (SAFE-811 / PROD-811). "Exertion" is any category other
 # than WARMUP, BREATHING, RELAXATION -- i.e. MOBILITY, LIGHT_STRENGTH,
 # STRETCH count as exertion for the purpose of requiring a calm close.
-CLOSING_CATEGORIES = {"COOLDOWN", "BREATHING"}
+#
+# Owner decision, 2026-09-29: RELAXATION added as a third accepted closer
+# alongside COOLDOWN and BREATHING. RELAXATION was already treated as
+# non-exertion (below) but had not, until this change, been accepted as a
+# valid calm-close category in its own right -- a routine ending in
+# RELAXATION after an exertion segment (e.g. WARMUP -> MOBILITY ->
+# RELAXATION) previously failed check 3 even though RELAXATION is exactly
+# the kind of calm closer this check exists to require.
+CLOSING_CATEGORIES = {"COOLDOWN", "BREATHING", "RELAXATION"}
 NON_EXERTION_CATEGORIES = {"WARMUP", "BREATHING", "RELAXATION"}
 
 
@@ -133,8 +141,8 @@ def validate_routine(
         if s.movement_id in catalog_by_id
     ]
 
-    # Check 3: opens with WARMUP; closes with COOLDOWN/BREATHING if the
-    # routine contains any exertion segment (SAFE-811 / PROD-811).
+    # Check 3: opens with WARMUP; closes with COOLDOWN/BREATHING/RELAXATION
+    # if the routine contains any exertion segment (SAFE-811 / PROD-811).
     if resolved:
         first_category = resolved[0][1]["category"]
         last_category = resolved[-1][1]["category"]
@@ -146,7 +154,7 @@ def validate_routine(
             reasons.append("does_not_open_with_warmup")
 
         if has_exertion and last_category not in CLOSING_CATEGORIES:
-            reasons.append("does_not_close_with_cooldown_or_breathing")
+            reasons.append("does_not_close_with_cooldown_breathing_or_relaxation")
 
     # Check 4: sum of durations within tolerance of the requested budget
     # (PROD-121).

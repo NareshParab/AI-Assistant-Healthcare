@@ -1,0 +1,64 @@
+{
+  "catalogVersion": "1.0.0",
+  "presets": [
+    {
+      "id": "preset_10min_gentle",
+      "title": "10-Minute Gentle Session",
+      "targetDurationSec": 600,
+      "description": "A short seated warm-up and gentle mobility, closing with calm breathing.",
+      "segments": [
+        { "movementId": "warmup_seated_shoulder_rolls", "durationSec": 60 },
+        { "movementId": "mob_neck_rolls_seated", "durationSec": 60 },
+        { "movementId": "mob_shoulder_circles_seated", "durationSec": 60 },
+        { "movementId": "mob_seated_torso_twist_gentle", "durationSec": 60 },
+        { "movementId": "mob_wrist_circles_seated", "durationSec": 45 },
+        { "movementId": "stretch_seated_hamstring_reach", "durationSec": 75 },
+        { "movementId": "stretch_seated_upper_back_reach", "durationSec": 60 },
+        { "movementId": "breathing_seated_diaphragmatic", "durationSec": 150 }
+      ]
+    },
+    {
+      "id": "preset_15min_gentle",
+      "title": "15-Minute Gentle Session",
+      "targetDurationSec": 900,
+      "description": "A seated warm-up, a fuller mobility and stretch sequence, closing with calm breathing.",
+      "segments": [
+        { "movementId": "warmup_seated_shoulder_rolls", "durationSec": 60 },
+        { "movementId": "warmup_seated_arm_reaches", "durationSec": 60 },
+        { "movementId": "mob_neck_rolls_seated", "durationSec": 60 },
+        { "movementId": "mob_shoulder_circles_seated", "durationSec": 60 },
+        { "movementId": "mob_seated_torso_twist_gentle", "durationSec": 60 },
+        { "movementId": "mob_seated_knee_extensions", "durationSec": 90 },
+        { "movementId": "mob_seated_hip_marching", "durationSec": 90 },
+        { "movementId": "stretch_seated_hamstring_reach", "durationSec": 90 },
+        { "movementId": "stretch_seated_upper_back_reach", "durationSec": 60 },
+        { "movementId": "stretch_seated_side_stretch_gentle", "durationSec": 60 },
+        { "movementId": "breathing_seated_diaphragmatic", "durationSec": 180 }
+      ]
+    },
+    {
+      "id": "preset_20min_gentle",
+      "title": "20-Minute Gentle Session",
+      "targetDurationSec": 1200,
+      "description": "A longer seated warm-up, mobility, light strength and stretch sequence, closing with breathing and a brief relaxation.",
+      "segments": [
+        { "movementId": "warmup_seated_shoulder_rolls", "durationSec": 60 },
+        { "movementId": "warmup_seated_arm_reaches", "durationSec": 60 },
+        { "movementId": "warmup_seated_ankle_circles", "durationSec": 60 },
+        { "movementId": "mob_neck_rolls_seated", "durationSec": 60 },
+        { "movementId": "mob_shoulder_circles_seated", "durationSec": 60 },
+        { "movementId": "mob_seated_torso_twist_gentle", "durationSec": 90 },
+        { "movementId": "mob_seated_knee_extensions", "durationSec": 90 },
+        { "movementId": "mob_seated_hip_marching", "durationSec": 90 },
+        { "movementId": "mob_seated_torso_side_reach", "durationSec": 60 },
+        { "movementId": "strength_seated_leg_extensions", "durationSec": 90 },
+        { "movementId": "strength_seated_arm_raises", "durationSec": 60 },
+        { "movementId": "stretch_seated_hamstring_reach", "durationSec": 90 },
+        { "movementId": "stretch_seated_upper_back_reach", "durationSec": 60 },
+        { "movementId": "stretch_seated_side_stretch_gentle", "durationSec": 60 },
+        { "movementId": "breathing_seated_diaphragmatic", "durationSec": 120 },
+        { "movementId": "relax_seated_shoulder_release", "durationSec": 60 }
+      ]
+    }
+  ]
+}

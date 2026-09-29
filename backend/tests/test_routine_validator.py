@@ -187,7 +187,7 @@ def test_routine_must_open_with_warmup(catalog_by_id, unfiltered_ids):
     assert "does_not_open_with_warmup" in result.failure_reasons
 
 
-def test_routine_with_exertion_must_close_with_cooldown_or_breathing(
+def test_routine_with_exertion_must_close_with_an_accepted_category(
     catalog_by_id, unfiltered_ids
 ):
     warmup_id = next(
@@ -197,7 +197,10 @@ def test_routine_with_exertion_must_close_with_cooldown_or_breathing(
         mv["id"] for mv in catalog_by_id.values() if mv["category"] == "MOBILITY"
     )
     # Opens correctly, but closes on an exertion segment (MOBILITY) instead
-    # of BREATHING/COOLDOWN -- must fail even though it opened correctly.
+    # of COOLDOWN/BREATHING/RELAXATION -- must fail even though it opened
+    # correctly. Owner decision 2026-09-29 added RELAXATION as a third
+    # accepted closer alongside COOLDOWN/BREATHING; MOBILITY is still not
+    # one of the three and must still fail closed.
     segments = [
         RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
         RoutineSegment(mobility_id, catalog_by_id[mobility_id]["defaultDurationSec"]),
@@ -209,7 +212,109 @@ def test_routine_with_exertion_must_close_with_cooldown_or_breathing(
         requested_budget_sec=sum(s.duration_sec for s in segments),
     )
     assert result.failed
-    assert "does_not_close_with_cooldown_or_breathing" in result.failure_reasons
+    assert "does_not_close_with_cooldown_breathing_or_relaxation" in result.failure_reasons
+
+
+def test_routine_with_exertion_closing_with_relaxation_passes(
+    catalog_by_id, unfiltered_ids
+):
+    """Owner decision 2026-09-29: RELAXATION is now an accepted closer. This
+    is the case the decision exists to fix -- WARMUP -> MOBILITY (exertion)
+    -> RELAXATION previously failed check 3 even though RELAXATION is
+    exactly the kind of calm closer the check requires.
+    """
+    warmup_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
+    )
+    mobility_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "MOBILITY"
+    )
+    relax_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "RELAXATION"
+    )
+    segments = [
+        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
+        RoutineSegment(mobility_id, catalog_by_id[mobility_id]["defaultDurationSec"]),
+        RoutineSegment(relax_id, catalog_by_id[relax_id]["defaultDurationSec"]),
+    ]
+    result = validate_routine(
+        segments,
+        catalog_by_id=catalog_by_id,
+        filtered_catalog_ids=unfiltered_ids,
+        requested_budget_sec=sum(s.duration_sec for s in segments),
+    )
+    assert result.passed, result.failure_reasons
+
+
+def test_routine_with_exertion_closing_with_breathing_still_passes(
+    catalog_by_id, unfiltered_ids
+):
+    """Regression guard: BREATHING must still work as a closer after the
+    RELAXATION addition -- the set gained a member, it did not lose one.
+    """
+    warmup_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "WARMUP"
+    )
+    mobility_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "MOBILITY"
+    )
+    breathing_id = next(
+        mv["id"] for mv in catalog_by_id.values() if mv["category"] == "BREATHING"
+    )
+    segments = [
+        RoutineSegment(warmup_id, catalog_by_id[warmup_id]["defaultDurationSec"]),
+        RoutineSegment(mobility_id, catalog_by_id[mobility_id]["defaultDurationSec"]),
+        RoutineSegment(breathing_id, catalog_by_id[breathing_id]["defaultDurationSec"]),
+    ]
+    result = validate_routine(
+        segments,
+        catalog_by_id=catalog_by_id,
+        filtered_catalog_ids=unfiltered_ids,
+        requested_budget_sec=sum(s.duration_sec for s in segments),
+    )
+    assert result.passed, result.failure_reasons
+
+
+def test_routine_closing_with_cooldown_category_still_passes_validator_logic():
+    """No movement in the real 45-entry catalog is categorised COOLDOWN
+    (verified: zero matches for "COOLDOWN" in shared/movement-catalog/
+    catalog.json) -- a pre-existing gap between the validator's accepted
+    category set and the catalog's actual authored content, reported in
+    this task rather than silently worked around. This test therefore
+    exercises the VALIDATOR's set-membership logic in isolation, using a
+    minimal synthetic catalog dict (not the real fixture, not catalog.json)
+    to prove COOLDOWN is still accepted as a closer category by the code,
+    independent of whether real COOLDOWN content exists yet.
+    """
+    synthetic_catalog_by_id = {
+        "synthetic_warmup": {
+            "category": "WARMUP",
+            "minDurationSec": 30,
+            "maxDurationSec": 90,
+        },
+        "synthetic_mobility": {
+            "category": "MOBILITY",
+            "minDurationSec": 30,
+            "maxDurationSec": 90,
+        },
+        "synthetic_cooldown": {
+            "category": "COOLDOWN",
+            "minDurationSec": 30,
+            "maxDurationSec": 90,
+        },
+    }
+    segments = [
+        RoutineSegment("synthetic_warmup", 60),
+        RoutineSegment("synthetic_mobility", 60),
+        RoutineSegment("synthetic_cooldown", 60),
+    ]
+    result = validate_routine(
+        segments,
+        catalog_by_id=synthetic_catalog_by_id,
+        filtered_catalog_ids=set(synthetic_catalog_by_id.keys()),
+        requested_budget_sec=180,
+    )
+    assert result.passed, result.failure_reasons
 
 
 def test_all_relaxation_or_breathing_routine_has_no_exertion_so_any_close_is_fine(
