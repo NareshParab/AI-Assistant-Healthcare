@@ -47,8 +47,10 @@ def get_connection(db_path: pathlib.Path | None = None) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create the devices/pairing_codes/documents tables if they do not
-    already exist.
+    """Create the devices/pairing_codes/documents tables, and the extraction
+    tables (extraction_jobs/source_references/proposals/ai_request_log), if
+    they do not already exist. Idempotent: safe to run on every connection
+    and on databases created before the extraction tables existed.
 
     Only a hash of any secret value is ever stored (device token, pairing
     code) -- never the raw value, per this task's explicit requirement.
@@ -94,4 +96,112 @@ def init_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _init_extraction_schema(conn)
     conn.commit()
+
+
+def _init_extraction_schema(conn: sqlite3.Connection) -> None:
+    """Extraction storage (contract sections 3.3/3.4/5/6/7; plan 3.2).
+
+    Pre-confirmation, server-owned data only (D6). proposed_fields_json and
+    processing-style strings are generic text: no enum is enforced here except
+    the job status, which is fixed by contract section 7. ai_request_log has
+    NO prompt, response or document-text column, by design (PRIV-1652).
+    """
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS extraction_jobs (
+            job_id         TEXT PRIMARY KEY,
+            document_id    TEXT NOT NULL,
+            device_id      TEXT NOT NULL,
+            status         TEXT NOT NULL
+                           CHECK (status IN ('PENDING','RUNNING','COMPLETED','EXTRACTION_FAILED')),
+            error_class    TEXT,
+            retry_count    INTEGER,
+            model          TEXT,
+            schema_version TEXT,
+            created_at     TEXT NOT NULL,
+            started_at     TEXT,
+            finished_at    TEXT,
+            FOREIGN KEY (document_id) REFERENCES documents (document_id),
+            FOREIGN KEY (device_id) REFERENCES devices (device_id)
+        )
+        """
+    )
+    # Contract section 1 idempotency: at most one active job per document.
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_extraction_jobs_active_per_document
+        ON extraction_jobs (document_id)
+        WHERE status IN ('PENDING','RUNNING')
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_references (
+            source_reference_id TEXT PRIMARY KEY,
+            document_id         TEXT NOT NULL,
+            page                INTEGER NOT NULL,
+            x0                  REAL NOT NULL,
+            y0                  REAL NOT NULL,
+            x1                  REAL NOT NULL,
+            y1                  REAL NOT NULL,
+            verbatim_text       TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents (document_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS proposals (
+            proposal_id                     TEXT PRIMARY KEY,
+            document_id                     TEXT NOT NULL,
+            job_id                          TEXT NOT NULL,
+            device_id                       TEXT NOT NULL,
+            proposed_type                   TEXT NOT NULL,
+            proposed_fields_json            TEXT NOT NULL,
+            original_text                   TEXT NOT NULL,
+            source_reference_id             TEXT NOT NULL,
+            page                            INTEGER NOT NULL,
+            confidence                      REAL NOT NULL,
+            review_state                    TEXT NOT NULL,
+            verbatim_check                  TEXT NOT NULL,
+            source_status                   TEXT,
+            originally_proposed_fields_json TEXT,
+            edited_fields_json              TEXT,
+            edit_reason                     TEXT,
+            reviewed_at                     TEXT,
+            plain_language_text             TEXT,
+            plain_language_is_verbatim_fallback INTEGER,
+            created_at                      TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents (document_id),
+            FOREIGN KEY (job_id) REFERENCES extraction_jobs (job_id),
+            FOREIGN KEY (device_id) REFERENCES devices (device_id),
+            FOREIGN KEY (source_reference_id) REFERENCES source_references (source_reference_id)
+        )
+        """
+    )
+    # AIRequestLog (plan 3.2/5.5): content-free audit fields only. job_id is
+    # deliberately NOT a foreign key, so a row can outlive its job's deletion
+    # (see backend/storage/extraction.py, delete_document_extraction_data).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_request_log (
+            log_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id             TEXT NOT NULL,
+            regime             TEXT NOT NULL,
+            operation          TEXT NOT NULL,
+            schema_version     TEXT NOT NULL,
+            model              TEXT NOT NULL,
+            latency_ms         REAL NOT NULL,
+            validation_outcome TEXT NOT NULL,
+            retry_count        INTEGER NOT NULL,
+            error_class        TEXT,
+            created_at         TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_extraction_jobs_document ON extraction_jobs (document_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_source_references_document ON source_references (document_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_proposals_document ON proposals (document_id)")
