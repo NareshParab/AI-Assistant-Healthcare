@@ -185,3 +185,26 @@ resolve unilaterally.
 **Suggestion:** A follow-up task, scoped explicitly to emulator setup, is
 the appropriate next step if runtime D-pad behaviour needs to be verified
 before physical-device validation happens.
+
+---
+
+## A1 - App shell, TV theme/focus base, Room skeleton
+
+### FL-009 - The Android project template ships with no unit-test runner configured
+
+**Task:** Add JVM unit tests for the pure navigation-state logic, with the
+project's own rule of "no new test libraries beyond what is already there".
+**Steps:** Inspected `firetv/app/build.gradle.kts` before writing tests, then
+ran `testDebugUnitTest` planning.
+**Expected:** A project created for Android development to already carry a
+JVM test dependency.
+**Actual:** There is no `testImplementation` line at all in the P1/P2 project.
+`testDebugUnitTest` has nothing that can discover or run a test until JUnit
+is added, so "use only what is already in the project" is unsatisfiable for
+any test.
+**Severity:** Low - one line to fix, but it directly conflicts with the
+no-new-dependency rule, so it needed an explicit owner decision.
+**Workaround:** Owner approved `testImplementation("junit:junit:4.13.2")`
+(test scope only). Nothing else was added for testing.
+**Suggestion:** Record test-runner availability as part of the P1 toolchain
+checklist so later tasks do not hit a dependency-approval stop.

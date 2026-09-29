@@ -47,5 +47,20 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- A1 app shell (navigation skeleton + TV theme/focus base). Own
+             launcher tile, added alongside the two above, which are unchanged. -->
+        <activity
+            android:name=".nav.ShellActivity"
+            android:exported="true"
+            android:label="@string/shell_label"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AiAssistantHealthcare">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

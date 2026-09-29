@@ -2,4 +2,6 @@
     <string name="app_name">AI Assistant Healthcare</string>
     <!-- P2 validation-only launcher tile label; not a product screen. -->
     <string name="p2_validation_label">P2 Focus Validation (POC)</string>
+    <!-- A1 app-shell launcher tile label. -->
+    <string name="shell_label">AI Assistant Healthcare (App Shell)</string>
 </resources>

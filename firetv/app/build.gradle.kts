@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -43,6 +44,12 @@ android {
     }
 }
 
+// Room schema export (committed under app/schemas so schema changes are
+// reviewable diffs).
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
 
@@ -55,5 +62,13 @@ dependencies {
     implementation("androidx.tv:tv-foundation:1.0.0")
     implementation("androidx.tv:tv-material:1.1.0")
 
+    // Room (D6: device store for confirmed data). Runtime + ktx + KSP compiler.
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // JVM unit tests only (navigation state logic). No instrumented tests.
+    testImplementation("junit:junit:4.13.2")
 }
