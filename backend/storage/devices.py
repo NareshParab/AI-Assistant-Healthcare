@@ -134,17 +134,32 @@ def create_pairing_code(
     raise RuntimeError("could not generate a unique pairing code after 5 attempts")
 
 
+def resolve_pairing_code_device(
+    conn: sqlite3.Connection, raw_code: str, *, now: datetime | None = None
+) -> str | None:
+    """Return the owning device_id if `raw_code` exists and has not expired
+    as of `now`, else None. The single definition of pairing-code validity.
+
+    Lookup is by SHA-256 hash of the presented value (as for device tokens),
+    so the raw code is never compared character-by-character.
+    """
+
+    if not raw_code:
+        return None
+    now = now or _utc_now()
+    row = conn.execute(
+        "SELECT device_id, expires_at FROM pairing_codes WHERE code_hash = ?",
+        (_hash(raw_code),),
+    ).fetchone()
+    if row is None:
+        return None
+    expires_at = datetime.strptime(row[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return row[0] if now < expires_at else None
+
+
 def is_pairing_code_valid(
     conn: sqlite3.Connection, raw_code: str, *, now: datetime | None = None
 ) -> bool:
     """True if `raw_code` exists and has not expired as of `now`."""
 
-    now = now or _utc_now()
-    row = conn.execute(
-        "SELECT expires_at FROM pairing_codes WHERE code_hash = ?",
-        (_hash(raw_code),),
-    ).fetchone()
-    if row is None:
-        return False
-    expires_at = datetime.strptime(row[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    return now < expires_at
+    return resolve_pairing_code_device(conn, raw_code, now=now) is not None

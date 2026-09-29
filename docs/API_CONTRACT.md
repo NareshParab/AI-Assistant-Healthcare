@@ -1,8 +1,8 @@
 # API Contract — AI Assistant Healthcare Backend
 
-**STATUS: FROZEN v1.0.0 — approved by owner 2026-09-29.**
+**STATUS: FROZEN v1.1.0 — v1.0.0 approved by owner 2026-09-29; amended additively to v1.1.0 by owner decision 2026-09-29 (§10 decision 14, §12).**
 
-This is the frozen v1.0.0 API contract. Every shape in this document is a commitment both
+This is the frozen v1.1.0 API contract. Every shape in this document is a commitment both
 developers may build against. Any change past this point — an added, removed, or altered
 endpoint, field, error code, or status code — requires explicit owner approval and a
 version bump, per §12 (Change control). Additive-only changes are not exempt.
@@ -33,6 +33,35 @@ pointer, not a restatement with authority of its own.
 | Auth | Device-token, sent as a single HTTP header on every request except `/v1/health`: **`X-Device-Token`** (resolved 2026-09-29, §10 decision 2). No accounts, no login, no per-user credential (D22) |
 | Idempotency | `POST /v1/documents/{id}/extract` is idempotent per document: calling it again while a job is already `PENDING`/`RUNNING` for that document returns the existing job, not a second job. `POST /v1/proposals/{id}/review` is **not** idempotent — reviewing an already-reviewed proposal returns `409 Conflict`. `DELETE /v1/documents/{id}` is idempotent in effect (deleting an already-deleted document returns `404`, not a second success), but is not retried automatically by convention. All other `POST` endpoints are not idempotent (each call is a new, independent generation) |
 | Pagination | None of the 17 endpoints below return an unbounded list; document/proposal lists are scoped to one device's own documents, which is expected to stay small. No pagination scheme is defined in this contract |
+
+### 1.0 Companion credential: `X-Pairing-Code` (added v1.1.0)
+
+`POST /v1/documents` (§3.2) accepts **either** of two credentials, and **only that endpoint**
+does:
+
+- `X-Device-Token` — as everywhere else (above).
+- `X-Pairing-Code` — the 6-character code from `POST /v1/devices/pairing-code` (§3.1), for
+  the companion (D21/D22), which holds no device token.
+
+Rules:
+
+- A pairing code grants **upload-to-that-device only**. It grants no read access of any
+  kind, and **every other endpoint ignores it** — a request that carries only
+  `X-Pairing-Code` to any other authenticated endpoint is `401 UNAUTHENTICATED`.
+- A document uploaded with a pairing code is owned by the device that owns the code, exactly
+  as if that device's token had been used.
+- **Both headers sent:** `X-Device-Token` wins and `X-Pairing-Code` is ignored. An invalid
+  device token is **not** rescued by a valid pairing code — the request fails with `401
+  UNAUTHENTICATED` (fail closed).
+- A header that is absent or empty counts as not sent. **Neither header sent:** `401
+  UNAUTHENTICATED`.
+- For `UNAUTHENTICATED` (§2), "invalid credential" on this endpoint includes an unknown or
+  expired pairing code. No new error code is introduced.
+- A pairing code is **reusable until its expiry**: it is not consumed by use, and every
+  upload within its validity window is accepted. The long-lived demo code (§3.1, D22)
+  follows the same header rule and the same reuse rule.
+- Codes are matched exactly as issued (uppercase). The server never logs a device token or
+  pairing code (D26).
 
 ### 1.1 What the client never holds
 
@@ -172,6 +201,11 @@ further here.
 | Tier (D20) | 2 |
 | Fallback (D24) | N/A — not an AI-touching operation; D24's fallback table does not apply. An oversized or wrong-type upload is rejected outright (§2) with no partial/degraded acceptance |
 
+**Auth (v1.1.0):** either `X-Device-Token` **or** `X-Pairing-Code` (§1.0). If both are sent
+the device token wins; if neither is sent, or the credential is invalid, unknown or expired,
+the response is `401 UNAUTHENTICATED`. The document is bound to the device that owns the
+credential.
+
 **Request:** `multipart/form-data` with one file field, `file`, containing a text-layer PDF
 (D7 — no OCR, no scanned images accepted in this MVP).
 
@@ -187,8 +221,13 @@ further here.
 }
 ```
 
-**Status codes:** `201` created. `401` `UNAUTHENTICATED`. `413` `PAYLOAD_TOO_LARGE`. `415`
-`UNSUPPORTED_MEDIA_TYPE`. `500` `INTERNAL_ERROR`.
+**Note on `documentType`:** the upload response returns `"documentType": "unspecified"`
+until extraction classifies the document. The `"prescription"` value in the example above
+is illustrative of a classified document.
+
+**Status codes:** `201` created. `401` `UNAUTHENTICATED` (missing credentials, or an
+invalid device token, or an invalid, unknown or expired pairing code). `413`
+`PAYLOAD_TOO_LARGE`. `415` `UNSUPPORTED_MEDIA_TYPE`. `500` `INTERNAL_ERROR`.
 
 **Upload size limit resolved 2026-09-29 (§10 decision 4): 20 MB**, enforced server-side,
 rejected with `413 PAYLOAD_TOO_LARGE`.
@@ -977,6 +1016,9 @@ Each entry: the decision, a one-line rationale, and the date.
 | 11 | Whether a failed `routines/generate` attempt's `failureReasons` reach the client | **No.** The client sees only `origin: "PRESET"` and the served routine's own passing `validationResult`; failure detail is server-side/log-only | D26: internal model-failure detail is not client-facing information | 2026-09-29 |
 | 12 | Request body fields for `POST /v1/devices/register` and `POST /v1/devices/pairing-code` | **Empty body** for both | No real need identified for client metadata at registration/pairing time in this MVP | 2026-09-29 |
 | 13 | Presets for `routines/generate`'s `PRESET` origin (plan §7.4) — none exist in the repo | **Not part of this contract change.** The `PRESET` fallback path's shape is frozen (§3.5); the *content* it depends on is a **known implementation dependency**, not a contract question | Presets are catalog authoring work (same process as D17), independent of what the API shape looks like | 2026-09-29 |
+| 14 | *(post-freeze, v1.1.0)* How does the companion, which holds no device token, authenticate `POST /v1/documents`? | **Option A:** `POST /v1/documents` accepts **either** `X-Device-Token` **or** a new `X-Pairing-Code` header. No new endpoint, no new token type, no redemption endpoint. Device token wins if both are sent; the pairing code grants upload-to-that-device only (§1.0) | The companion (D21/D22) has only a pairing code; this closes that gap with the smallest additive change and leaves every other endpoint's auth untouched | 2026-09-29 |
+
+Decision 14 was made after the v1.0.0 freeze, and is recorded in §12.
 
 ---
 
@@ -993,7 +1035,7 @@ separately from this document. It does not block freezing this contract, because
 
 ## 12. Change control
 
-**This contract is FROZEN at v1.0.0, effective 2026-09-29.**
+**This contract is FROZEN at v1.1.0 (v1.0.0 frozen 2026-09-29; amended additively 2026-09-29).**
 
 From this point forward:
 
@@ -1016,5 +1058,7 @@ From this point forward:
 |---|---|---|
 | v1.0.0 | 2026-09-29 | Initial freeze. 17 endpoints (16 from `ARCHITECTURE_MVP_PLAN.md` §4's table + `DELETE /v1/documents/{id}`, added per owner decision). All 13 pre-freeze open questions resolved per §10. Item 10 (extraction timeout) marked PROVISIONAL pending P5 latency measurements — a future change to that number alone still requires a version bump per the rule above |
 
-No further changes are recorded in this document as of the freeze date. The next entry in
-this table is the first thing to add when a change is approved.
+| v1.1.0 | 2026-09-29 | Additive, backward-compatible. `POST /v1/documents` additionally accepts an `X-Pairing-Code` header as an alternative to `X-Device-Token` (§1.0, §3.2, §10 decision 14). Reason: the companion (D21/D22) holds only a pairing code, so v1.0.0 gave it no way to authenticate an upload. No new endpoint (still 17), no new error code; existing `X-Device-Token` behaviour is unchanged. Also records that the upload response's `documentType` is `"unspecified"` until extraction classifies it |
+
+No further changes are recorded in this document beyond v1.1.0. The next entry in this
+table is the first thing to add when a change is approved.

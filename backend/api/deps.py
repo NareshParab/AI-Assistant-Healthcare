@@ -9,6 +9,7 @@ the /v1/poc/p4/* POC routes are unaffected, per this task's explicit scope.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Iterator
 
 from fastapi import Depends, Header
@@ -50,3 +51,34 @@ def require_device_token(
     if device_id is None:
         raise ContractError("UNAUTHENTICATED")
     return device_id
+
+
+def get_utc_now() -> datetime:
+    """Current UTC time. A dependency so tests can inject a fixed clock."""
+
+    return datetime.now(timezone.utc)
+
+
+def require_upload_device(
+    x_device_token: str | None = Header(default=None, alias="X-Device-Token"),
+    x_pairing_code: str | None = Header(default=None, alias="X-Pairing-Code"),
+    conn: sqlite3.Connection = Depends(get_db_connection),
+    now: datetime = Depends(get_utc_now),
+) -> str:
+    """Auth for POST /v1/documents ONLY (contract v1.1.0 section 1):
+    X-Device-Token OR X-Pairing-Code, resolving to a device_id.
+
+    Rule when both are sent: the device token wins and the pairing code is
+    ignored -- an invalid token is NOT rescued by a valid code (fail closed).
+    A header that is absent or empty counts as not sent. Neither -> 401.
+    """
+
+    if x_device_token:
+        return require_device_token(x_device_token, conn)
+
+    if x_pairing_code:
+        device_id = devices_storage.resolve_pairing_code_device(conn, x_pairing_code, now=now)
+        if device_id is not None:
+            return device_id
+
+    raise ContractError("UNAUTHENTICATED")

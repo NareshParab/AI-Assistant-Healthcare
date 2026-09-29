@@ -25,7 +25,7 @@ import time
 from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse
 
-from backend.api.deps import get_db_connection, require_device_token
+from backend.api.deps import get_db_connection, require_device_token, require_upload_device
 from backend.api.errors import ContractError, register_exception_handlers
 from backend.documents.pdf_evidence import (
     EvidenceNotFoundError,
@@ -157,9 +157,9 @@ def create_pairing_code_route(
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/documents (contract section 3.2). Auth: X-Device-Token -- the
-# contract's only defined auth mechanism for this endpoint (see this task's
-# report for the D21 companion/pairing-code gap this does not resolve).
+# POST /v1/documents (contract section 3.2). Auth (contract v1.1.0):
+# X-Device-Token OR X-Pairing-Code, via require_upload_device -- this is the
+# only route that accepts a pairing code.
 # Status codes per contract: 201/401/413/415/500 only (no 422 here), so
 # every content-rejection case below is UNSUPPORTED_MEDIA_TYPE (415).
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def create_pairing_code_route(
 @app.post("/v1/documents", status_code=201)
 def upload_document_route(
     file: UploadFile = File(...),
-    device_id: str = Depends(require_device_token),
+    device_id: str = Depends(require_upload_device),
     conn: sqlite3.Connection = Depends(get_db_connection),
 ) -> dict:
     """Contract section 3.2: upload a text-layer PDF. Size/type validated
