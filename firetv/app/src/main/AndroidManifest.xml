@@ -31,5 +31,21 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- P2 validation POC only (ARCHITECTURE_MVP_PLAN.md Section 12).
+             Own launcher tile so it can be reached and exercised with the
+             D-pad alone, exactly like MainActivity. Not a product screen. -->
+        <activity
+            android:name=".P2FocusValidationActivity"
+            android:exported="true"
+            android:label="@string/p2_validation_label"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AiAssistantHealthcare">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
