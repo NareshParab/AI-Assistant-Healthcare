@@ -124,11 +124,25 @@ def _init_extraction_schema(conn: sqlite3.Connection) -> None:
             created_at     TEXT NOT NULL,
             started_at     TEXT,
             finished_at    TEXT,
+            document_date  TEXT,
             FOREIGN KEY (document_id) REFERENCES documents (document_id),
             FOREIGN KEY (device_id) REFERENCES devices (device_id)
         )
         """
     )
+    # document_date (extraction T5): the document's own verbatim issue date,
+    # stored once per job (contract 3.3). Added after the first release of this
+    # table, so databases created earlier get it via a guarded, idempotent
+    # ALTER; a fresh database already has it from the CREATE above.
+    job_columns = {row[1] for row in conn.execute("PRAGMA table_info(extraction_jobs)")}
+    if "document_date" not in job_columns:
+        try:
+            conn.execute("ALTER TABLE extraction_jobs ADD COLUMN document_date TEXT")
+        except sqlite3.OperationalError:
+            # A concurrent connection added it between the check and the ALTER.
+            job_columns = {row[1] for row in conn.execute("PRAGMA table_info(extraction_jobs)")}
+            if "document_date" not in job_columns:
+                raise
     # Contract section 1 idempotency: at most one active job per document.
     conn.execute(
         """

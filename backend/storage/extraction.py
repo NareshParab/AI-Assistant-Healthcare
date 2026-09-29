@@ -99,6 +99,7 @@ class JobRecord:
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    document_date: str | None = None  # the document's own verbatim issue date (contract 3.3)
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,7 @@ class DeletionCounts:
 
 _JOB_COLUMNS = (
     "job_id, document_id, device_id, status, error_class, retry_count, model, "
-    "schema_version, created_at, started_at, finished_at"
+    "schema_version, created_at, started_at, finished_at, document_date"
 )
 
 
@@ -192,6 +193,7 @@ def _job_from_row(row: tuple) -> JobRecord:
         created_at=_parse(row[8]),
         started_at=_parse(row[9]),
         finished_at=_parse(row[10]),
+        document_date=row[11],
     )
 
 
@@ -397,10 +399,13 @@ def persist_extraction_results(
     model: str | None = None,
     schema_version: str | None = None,
     retry_count: int | None = None,
+    document_date: str | None = None,
     now: datetime | None = None,
 ) -> JobRecord:
     """Insert source references and proposals AND flip the job RUNNING ->
     COMPLETED in ONE transaction: all or nothing (D24: no partial proposals).
+    `document_date` (optional, default None) is stored on the job in the same
+    transaction.
 
     Any failure -- a bad row, a non-serializable field, a constraint, an
     illegal job state -- rolls everything back, leaving no proposals, no
@@ -463,6 +468,11 @@ def persist_extraction_results(
             model=model,
             schema_version=schema_version,
         )
+        if document_date is not None:
+            conn.execute(
+                "UPDATE extraction_jobs SET document_date = ? WHERE job_id = ? AND device_id = ?",
+                (document_date, job_id, device_id),
+            )
         conn.commit()
     except Exception:
         conn.rollback()
